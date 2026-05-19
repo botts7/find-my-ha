@@ -28,7 +28,7 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **v0.5.8 — sticky Continue, flash modes, mode-aware search.**
+🚧 **v0.5.9 — iOS safe-area + Tab 2 search auto-focus.**
 Live at https://botts7.github.io/find-my-ha/. Tab 1 hardcoded
 visible; SW network-first for everything; visible version pill; JS
 error banner; force-update self-rescue button at the bottom.
@@ -46,6 +46,7 @@ Cumulative feature set:
 - **v0.4.3** — HOT-zone freeze (honest UX at sub-meter range where physics noise > step delta)
 - **v0.5** — walking-verify mode: pick ANY controllable entity, Flash button, area picker, "I'm here ✓" writes `config/entity_registry/update`
 - **v0.5.8** — sticky Continue bar, mode-aware search placeholder, Flash style dropdown (Single / Loop), safe 2.5 s inter-toggle interval (avoids every vendor reset/pairing threshold), 60 s auto-stop, vibration feedback
+- **v0.5.9** — body padding now respects `env(safe-area-inset-bottom)` on notched iOS so the last entity row isn't covered by the Continue bar; Tab 2 search auto-focuses on entry for instant type-to-filter
 
 ## Quick start (early-access)
 
@@ -70,7 +71,7 @@ iOS users: install the HA Companion app — once the Companion feature request (
 
 ## Roadmap
 
-- **v0.1 → v0.5.8**: all *shipped*. See Status above + git log for the detailed trail.
+- **v0.1 → v0.5.9**: all *shipped*. See Status above + git log for the detailed trail.
 
 ### Deferred — v0.6 walking-verify expansion (parked 2026-05-19)
 

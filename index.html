@@ -46,7 +46,11 @@
       font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
     }
-    body { padding: 16px; padding-bottom: 80px; max-width: 560px; margin: 0 auto; }
+    body {
+      padding: 16px;
+      padding-bottom: max(80px, calc(80px + env(safe-area-inset-bottom)));
+      max-width: 560px; margin: 0 auto;
+    }
     h1 { margin: 0 0 4px 0; font-size: 1.5em; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     h1 .theme-toggle {
       background: transparent; border: 1px solid var(--border);
@@ -110,7 +114,9 @@
       max-width: 560px; margin: 0 auto;
       display: block; width: 100%;
     }
-    body.with-continue-bar { padding-bottom: 110px; }
+    body.with-continue-bar {
+      padding-bottom: max(110px, calc(110px + env(safe-area-inset-bottom)));
+    }
 
     /* Mode toggle inside Tab 2 (BLE find vs Identify & verify) */
     .mode-toggle {
