@@ -369,9 +369,13 @@
   // Bucket labels use hysteresis: entering HOT needs ≥-53 dBm but the
   // label stays HOT until you drop below -58. Stops the bucket label
   // from flickering when you're sitting on a boundary.
-  const TREND_WINDOW = 12;
-  const EMA_ALPHA = 0.25;
-  const MEDIAN_WINDOW = 3;
+  // v0.4.3: wider windows. At ~1-2 Hz advertising rate this gives 5-10s
+  // of data — enough to smooth out antenna jitter while still tracking
+  // walking pace. Trade-off: trend takes a few seconds to settle on
+  // direction changes, but no longer flickers when you're standing still.
+  const TREND_WINDOW = 16;
+  const EMA_ALPHA = 0.2;
+  const MEDIAN_WINDOW = 5;
   const rawBuffer = [];      // last MEDIAN_WINDOW raw samples for median filter
   const trendBuffer = [];    // last TREND_WINDOW smoothed samples for trend
   let smoothedRssi = null;
@@ -401,20 +405,26 @@
 
   function computeTrend() {
     const buf = trendBuffer;
-    if (buf.length < 8) return { arrow: "·", label: "settling" };
-    const recent = (buf[buf.length - 1] + buf[buf.length - 2] + buf[buf.length - 3] + buf[buf.length - 4]) / 4;
-    const earlier = (buf[buf.length - 5] + buf[buf.length - 6] + buf[buf.length - 7] + buf[buf.length - 8]) / 4;
+    if (buf.length < 12) return { arrow: "·", label: "settling" };
+    // v0.4.3: HOT-zone freeze. At close range (≥ -55 dBm) the RSSI noise
+    // floor is ~5-8 dB stddev from antenna geometry alone — bigger than
+    // the ~3 dB delta from a single step. Extracting "closer / further"
+    // from sub-noise-floor signal is mathematically dishonest, the
+    // arrow has to flicker. AirTag handles this by switching to UWB
+    // below 1m; we can't. Best honest UX: freeze the arrow and tell
+    // the user to sweep slowly to find peak.
+    const latest = buf[buf.length - 1];
+    if (latest >= -55) {
+      return { arrow: "🔥", label: "very close — sweep slowly to peak" };
+    }
+    // 6-vs-6 averaging window for stability.
+    const recent = buf.slice(-6).reduce((a, b) => a + b, 0) / 6;
+    const earlier = buf.slice(-12, -6).reduce((a, b) => a + b, 0) / 6;
     const delta = recent - earlier;
-    // v0.4.2: adaptive deadband. Close-in, normal antenna-geometry
-    // jitter is 5-10 dB even when you're standing still — a fixed
-    // ±2 dB threshold makes the arrow flicker constantly. Scale by
-    // signal strength: bigger deadband when close.
-    //   HOT (≥ -55):     ±4 dB — antenna rotation alone can be 10-15 dB
+    // Adaptive deadband for moderate range:
     //   warm (-70..-55): ±3 dB
-    //   cool/cold:       ±2 dB — far signals are more stable
-    const threshold = recent >= -55 ? 4
-                    : recent >= -70 ? 3
-                    : 2;
+    //   cool/cold (< -70): ±2 dB
+    const threshold = recent >= -70 ? 3 : 2;
     if (delta > threshold) return { arrow: "↑", label: "getting closer" };
     if (delta < -threshold) return { arrow: "↓", label: "getting further" };
     return { arrow: "→", label: "stable" };
