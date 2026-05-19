@@ -65,6 +65,9 @@
   const identifyConfirmedEl = $("identify-confirmed");
   const areaSelectEl = $("area-select");
   const confirmAreaBtn = $("confirm-area-btn");
+  // v0.5.1: explicit Continue button instead of auto-advance 2→3.
+  const continueToScanBtn = $("continue-to-scan-btn");
+  continueToScanBtn.addEventListener("click", () => switchTab(3));
 
   // ----- Theme override ---------------------------------------------------
   const savedTheme = localStorage.getItem("theme");
@@ -498,6 +501,17 @@
     const hasEntity = !!pickedEntity;
     const scanning = streamer.isActive();
 
+    // v0.5.1: show Continue → button at bottom of Tab 2 once entity is
+    // picked, so the user has an obvious path forward without us
+    // hijacking the tab.
+    if (continueToScanBtn) {
+      continueToScanBtn.style.display =
+        (connected && hasEntity && activeTab === 2) ? "block" : "none";
+      continueToScanBtn.textContent = mode === "identify"
+        ? "Continue to identify →"
+        : "Continue to scan →";
+    }
+
     stepsEl.querySelectorAll(".step").forEach((s) => {
       const n = Number(s.dataset.step);
       s.disabled = !reachable(n);
@@ -522,12 +536,14 @@
     });
   });
 
-  // Auto-advance helpers — call when state transitions complete.
+  // v0.5.1: only auto-advance 1→2 (connection done). Don't 2→3 on pick —
+  // that traps users who want to switch mode after a previous selection
+  // was restored. Tab 3 is one tap away via the steps bar OR the Continue
+  // button at the bottom of Tab 2.
   function maybeAutoAdvance() {
     const state = ws.getState();
     const connected = state === "authed" || state === "streaming";
     if (activeTab === 1 && connected) switchTab(2);
-    else if (activeTab === 2 && pickedEntity) switchTab(3);
   }
 
   // ----- Streamer ---------------------------------------------------------
@@ -562,13 +578,23 @@
   // Bucket labels use hysteresis: entering HOT needs ≥-53 dBm but the
   // label stays HOT until you drop below -58. Stops the bucket label
   // from flickering when you're sitting on a boundary.
-  // v0.4.3: wider windows. At ~1-2 Hz advertising rate this gives 5-10s
-  // of data — enough to smooth out antenna jitter while still tracking
-  // walking pace. Trade-off: trend takes a few seconds to settle on
-  // direction changes, but no longer flickers when you're standing still.
-  const TREND_WINDOW = 16;
-  const EMA_ALPHA = 0.2;
-  const MEDIAN_WINDOW = 5;
+  // v0.5.1: lighter smoothing. v0.4.3 over-corrected the close-range
+  // flicker by widening every window — fine standing still, terrible
+  // while walking. User reported half a house of walking + 1 min lag
+  // before display caught up. New defaults: median-3 + alpha 0.3 +
+  // 10-sample trend window = ~5s settling at 2 Hz, ~1.5s at 6 Hz.
+  // HOT-zone freeze (from v0.4.3) is still in place so close-range
+  // jitter doesn't drive arrow flicker.
+  const TREND_WINDOW = 10;
+  const EMA_ALPHA = 0.3;
+  const MEDIAN_WINDOW = 3;
+  // v0.5.1: staleness detection. If the target's advertisements stop
+  // reaching the phone (BLE tracker rotated MAC, walked out of range,
+  // paused under anti-stalking heuristic, etc.) the display would
+  // otherwise freeze on the last reading forever. After STALE_MS with
+  // no new sample for the filtered target, show "lost target".
+  const STALE_MS = 5000;
+  let lastTargetSampleAt = 0;
   const rawBuffer = [];      // last MEDIAN_WINDOW raw samples for median filter
   const trendBuffer = [];    // last TREND_WINDOW smoothed samples for trend
   let smoothedRssi = null;
@@ -808,6 +834,8 @@
       saveBtn.disabled = true;
       rssiSection.classList.add("scanning");
       nearbyRenderTimer = setInterval(renderNearby, 1500);
+      lastTargetSampleAt = 0;
+      startStalenessWatch();
 
       // Kick HA stream.
       if ((ws.getState() === "authed" || ws.getState() === "streaming") && pickedEntity) {
@@ -852,10 +880,41 @@
       return; // not our target
     }
     pushRssi(rssi);
+    lastTargetSampleAt = Date.now();
     updateRssiDisplay(smoothedRssi, name);
     if (streamer.isActive()) {
       streamer.pushSample(rssi, name);
       dlog("rssi", rssi, name);
+    }
+  }
+
+  // v0.5.1: poll for staleness. When the user filters on a name prefix
+  // and the target stops advertising (out of range, MAC rotation,
+  // anti-stalking pause), we'd otherwise show stale data forever. This
+  // poll runs alongside the scan and overrides the RSSI display with a
+  // "lost target" message when no matching advertisement has arrived
+  // for STALE_MS.
+  let stalenessTimer = null;
+  function startStalenessWatch() {
+    stopStalenessWatch();
+    stalenessTimer = setInterval(() => {
+      if (lastTargetSampleAt === 0) return;  // never had a sample yet
+      const age = Date.now() - lastTargetSampleAt;
+      if (age > STALE_MS) {
+        rssiBucket.textContent = "lost signal";
+        rssiBucket.className = "rssi-label rssi-bucket-cold";
+        rssiValue.className = "rssi-value rssi-bucket-cold";
+        rssiTrend.textContent = "🔍 no recent advertisement";
+        rssiMeta.textContent =
+          `last seen ${Math.round(age / 1000)}s ago — target may have moved out of `
+          + "range, paused advertising, or rotated its BLE MAC";
+      }
+    }, 1000);
+  }
+  function stopStalenessWatch() {
+    if (stalenessTimer) {
+      clearInterval(stalenessTimer);
+      stalenessTimer = null;
     }
   }
 
@@ -872,6 +931,7 @@
       clearInterval(nearbyRenderTimer);
       nearbyRenderTimer = null;
     }
+    stopStalenessWatch();
     rssiSection.classList.remove("scanning");
     if (streamer.isActive()) {
       streamer.stop().catch(() => { /* ignore */ });
