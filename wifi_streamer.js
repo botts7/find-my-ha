@@ -107,7 +107,7 @@
     }
 
     async function start(phoneEntityId, target) {
-      if (active) return;
+      if (active) return null;
       entityId = phoneEntityId;
       targetApDeviceId = target || null;
       active = true;
@@ -118,13 +118,16 @@
           // User stopped scan while subscribe was in flight — tear down.
           try { await sub.unsubscribe(); } catch (_) { /* ignore */ }
           setState("idle");
-          return;
+          return null;
         }
         subscription = sub;
         wsClient.markStreaming(true);
         setState("streaming");
         if (onInitialResult) { try { onInitialResult(sub.result); } catch (_) {} }
         _maybeEmitInitialAsSample(sub.result);
+        // v0.7.1: return the initial result so the caller can inspect
+        // is_trackable / reason BEFORE swapping its UI surface.
+        return sub.result;
       } catch (e) {
         active = false;
         setState("error");

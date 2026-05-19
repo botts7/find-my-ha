@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.0";
+  const APP_VERSION = "0.7.1";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -1127,6 +1127,11 @@
   });
 
   // ----- Wi-Fi find handlers (v0.7.0) -------------------------------------
+  // v0.7.1: 45 s soft-timeout. UniFi's default per-client signal poll is
+  // 30 s, UDM/UDR sometimes 10 s. If no sample lands in 45 s, surface a
+  // hint that the user's router may not be polling per-client signal
+  // (instead of just silently sitting at "— dBm").
+  let wifiNoSampleTimer = null;
   if (wifiFindStartBtn) {
     wifiFindStartBtn.addEventListener("click", async () => {
       wifiFindErrorEl.style.display = "none";
@@ -1140,44 +1145,93 @@
         wifiFindErrorEl.style.display = "block";
         return;
       }
+      // v0.7.1: keep the start surface visible until we KNOW the initial
+      // result is trackable. The old code swapped to rssi-section before
+      // the await, so if the entity wasn't Wi-Fi-trackable (or the
+      // server lacked the handler), the error was invisibly written to
+      // wifiFindErrorEl while the user stared at "— dBm" / "subscribing…".
+      lastWifiSampleAt = 0;
+      lastWifiSample = null;
+      wifiFindStartBtn.disabled = true;
+      let initialResult = null;
       try {
-        // Reset Wi-Fi-specific state, then subscribe.
-        lastWifiSampleAt = 0;
-        lastWifiSample = null;
-        wifiFindSection.style.display = "none";
-        rssiSection.style.display = "block";
-        rssiSection.classList.add("scanning");
-        // Hide nearby-devices section in Wi-Fi mode (BLE-only concept).
-        const nearbyDetails = $("nearby-details");
-        if (nearbyDetails) nearbyDetails.style.display = "none";
-        if (freshnessPillEl) freshnessPillEl.style.display = "inline-block";
-        // Reset RSSI display to initial state.
+        initialResult = await wifiStreamer.start(pickedEntity.entity_id);
+      } catch (e) {
+        wifiFindStartBtn.disabled = false;
+        const code = e?.error?.code ?? e?.code ?? null;
+        const msg = e?.error?.message ?? e?.message ?? String(e);
+        if (code === "unknown_command" || /unknown[_ ]command/i.test(msg)) {
+          wifiFindErrorEl.innerHTML =
+            "<strong>HA Insights v1.21.0 or newer required.</strong> "
+            + "The <code>home_insights/wifi_find_self</code> WS handler "
+            + "lives in v1.21.0+. Open HACS in Home Assistant and update "
+            + "HA Insights, then retry.";
+        } else {
+          wifiFindErrorEl.textContent = "Wi-Fi find subscribe failed: " + msg;
+        }
+        wifiFindErrorEl.style.display = "block";
+        return;
+      }
+      // Subscribe succeeded. Inspect the initial result BEFORE we hide
+      // the wifi-find-section — otherwise the error message would land
+      // on a hidden surface.
+      if (initialResult && initialResult.is_trackable === false) {
+        // Tear down the subscription cleanly.
+        try { await wifiStreamer.stop(); } catch (_) { /* ignore */ }
+        wifiFindStartBtn.disabled = false;
+        const reason = initialResult.reason
+          ?? "Entity is not Wi-Fi-trackable from the integration's state attributes.";
+        wifiFindErrorEl.innerHTML =
+          "<strong>" + pickedEntity.entity_id + " has no Wi-Fi signal data.</strong> "
+          + reason
+          + "<br><br>Try picking a different entity. UniFi exposes "
+          + "<code>rx_rssi</code> + <code>ap_mac</code> on its "
+          + "device-tracker entities; Asuswrt-Merlin exposes "
+          + "<code>signal</code> + <code>host</code>. The HA mobile_app "
+          + "device-tracker is GPS-only and won't work here.";
+        wifiFindErrorEl.style.display = "block";
+        return;
+      }
+      // Initial result OK — now swap surfaces.
+      wifiFindSection.style.display = "none";
+      rssiSection.style.display = "block";
+      rssiSection.classList.add("scanning");
+      // Hide nearby-devices section in Wi-Fi mode (BLE-only concept).
+      const nearbyDetails = $("nearby-details");
+      if (nearbyDetails) nearbyDetails.style.display = "none";
+      if (freshnessPillEl) freshnessPillEl.style.display = "inline-block";
+      // Initial RSSI display: if the server gave us a current reading,
+      // it was already pushed through handleWifiSample by the streamer's
+      // _maybeEmitInitialAsSample. Otherwise show a clear "waiting"
+      // state instead of the misleading "subscribing…" placeholder.
+      if (!lastWifiSampleAt) {
         rssiValue.textContent = "— dBm";
         rssiValue.className = "rssi-value";
-        rssiBucket.textContent = "subscribing…";
+        rssiBucket.textContent = "waiting for first sample…";
         rssiTrend.textContent = "·";
-        rssiMeta.textContent = "";
-        // Freshness pill 1-Hz updater.
-        if (freshnessTimer) clearInterval(freshnessTimer);
-        freshnessTimer = setInterval(_updateFreshnessPill, 1000);
-        await wifiStreamer.start(pickedEntity.entity_id);
-        wifiFindStartBtn.disabled = true;
-        updateStepIndicator();
-      } catch (e) {
-        const msg = e?.error?.message ?? e?.message ?? String(e);
-        wifiFindErrorEl.textContent = "Wi-Fi find subscribe failed: " + msg;
-        wifiFindErrorEl.style.display = "block";
-        // Restore the start surface.
-        rssiSection.style.display = "none";
-        wifiFindSection.style.display = "block";
-        if (freshnessPillEl) freshnessPillEl.style.display = "none";
-        if (freshnessTimer) { clearInterval(freshnessTimer); freshnessTimer = null; }
+        rssiMeta.textContent = "polling cadence ~10–30 s on most routers";
       }
+      // Freshness pill 1-Hz updater.
+      if (freshnessTimer) clearInterval(freshnessTimer);
+      freshnessTimer = setInterval(_updateFreshnessPill, 1000);
+      // 45-second no-sample warning.
+      if (wifiNoSampleTimer) clearTimeout(wifiNoSampleTimer);
+      wifiNoSampleTimer = setTimeout(() => {
+        if (!lastWifiSampleAt && wifiStreamer.isActive()) {
+          rssiBucket.textContent = "no samples yet — router not polling?";
+          rssiBucket.className = "rssi-label";
+          rssiMeta.textContent =
+            "Check your UniFi / Asuswrt / Omada controller's per-client "
+            + "statistics interval (10–30 s typical).";
+        }
+      }, 45000);
+      updateStepIndicator();
     });
   }
 
   async function stopWifiFindInternal() {
     if (freshnessTimer) { clearInterval(freshnessTimer); freshnessTimer = null; }
+    if (wifiNoSampleTimer) { clearTimeout(wifiNoSampleTimer); wifiNoSampleTimer = null; }
     if (wifiStreamer.isActive()) {
       try { await wifiStreamer.stop(); } catch (_) { /* ignore */ }
     }
