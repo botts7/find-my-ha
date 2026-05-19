@@ -12,7 +12,7 @@
 // each page load — when the bytes differ, browsers install the new SW
 // and fire `activate` (where we drop the old cache).
 
-const CACHE_VERSION = "find-my-ha-v0.4.1";
+const CACHE_VERSION = "find-my-ha-v0.4.2";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
