@@ -402,13 +402,21 @@
   function computeTrend() {
     const buf = trendBuffer;
     if (buf.length < 8) return { arrow: "·", label: "settling" };
-    // Wider window: average last 4 vs prior 4. Less sensitive to single-
-    // sample jitter than the v0.4 2-vs-2 comparison.
     const recent = (buf[buf.length - 1] + buf[buf.length - 2] + buf[buf.length - 3] + buf[buf.length - 4]) / 4;
     const earlier = (buf[buf.length - 5] + buf[buf.length - 6] + buf[buf.length - 7] + buf[buf.length - 8]) / 4;
     const delta = recent - earlier;
-    if (delta > 2) return { arrow: "↑", label: "getting closer" };
-    if (delta < -2) return { arrow: "↓", label: "getting further" };
+    // v0.4.2: adaptive deadband. Close-in, normal antenna-geometry
+    // jitter is 5-10 dB even when you're standing still — a fixed
+    // ±2 dB threshold makes the arrow flicker constantly. Scale by
+    // signal strength: bigger deadband when close.
+    //   HOT (≥ -55):     ±4 dB — antenna rotation alone can be 10-15 dB
+    //   warm (-70..-55): ±3 dB
+    //   cool/cold:       ±2 dB — far signals are more stable
+    const threshold = recent >= -55 ? 4
+                    : recent >= -70 ? 3
+                    : 2;
+    if (delta > threshold) return { arrow: "↑", label: "getting closer" };
+    if (delta < -threshold) return { arrow: "↓", label: "getting further" };
     return { arrow: "→", label: "stable" };
   }
 
