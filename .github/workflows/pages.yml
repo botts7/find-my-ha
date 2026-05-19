@@ -1,0 +1,62 @@
+# Deploy the PWA to GitHub Pages on every push to main.
+#
+# This repo IS the site — no build step, no bundler. Every file in the
+# repo root (index.html, app.js, ws_client.js, entity_picker.js,
+# streamer.js, manifest.webmanifest, sw.js) is served as-is.
+#
+# All asset paths in the source are already relative (`./sw.js`,
+# `icons/...`, `manifest.webmanifest`), so the site works correctly at
+# both the user-site root (`<user>.github.io`) and the project-page
+# subpath (`<user>.github.io/find-my-ha/`).
+#
+# After merging, enable Pages in repo Settings → Pages → "Build and
+# deployment" source = "GitHub Actions" (the workflow takes over from
+# there). The first deploy publishes to:
+#   https://botts7.github.io/find-my-ha/
+#
+# Web Bluetooth requires HTTPS (or localhost) — Pages serves HTTPS by
+# default, which is the whole point of bundling this with v0.2.
+
+name: Deploy PWA to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one in-flight deploy at a time; never cancel a deploy mid-run
+# (a partial Pages publish is worse than a delayed one).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # The repo root IS the site. Exclude dev-only paths that the
+          # browser never needs (workflow YAML, docs, license, README).
+          # GitHub Pages defaults to serving everything in the artifact,
+          # so trimming keeps the deploy small + tidy.
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

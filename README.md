@@ -40,7 +40,7 @@ Phone (PWA in Chrome)                Home Assistant
 ## Quick start (early-access)
 
 1. Open Chrome on Android (Web Bluetooth not yet supported in iOS Safari)
-2. Visit `https://botts7.github.io/find-my-ha/` (deploy planned)
+2. Visit `https://botts7.github.io/find-my-ha/` (auto-deployed from `main` via `.github/workflows/pages.yml`; needs Pages → Settings source = "GitHub Actions" once)
 3. Enter your HA URL + a long-lived access token
 4. Search/select an entity to locate
 5. Tap "Start scan", grant the BLE permission
