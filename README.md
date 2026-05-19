@@ -28,10 +28,10 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **v0.3 — Auto-filter from picked entity.** Pick an entity, the BLE
-name prefix + MAC fields auto-populate from HA's device registry
-(`config/device_registry/list`), so the local trend arrow tracks one
-device instead of averaging across every BLE advertiser in the room.
+🚧 **v0.5.8 — sticky Continue, flash modes, mode-aware search.**
+Live at https://botts7.github.io/find-my-ha/. Tab 1 hardcoded
+visible; SW network-first for everything; visible version pill; JS
+error banner; force-update self-rescue button at the bottom.
 
 Cumulative feature set:
 - Manual entry of target Bluetooth name/address → live RSSI display (local-only mode still supported)
@@ -41,7 +41,11 @@ Cumulative feature set:
 - Searchable HA entity picker (loaded from `config/entity_registry/list`)
 - Live RSSI streaming to HA Insights via `home_insights/companion_scan_*` messages, server-rate-limited (default 4 Hz)
 - Graceful teardown on stop / disconnect
-- **v0.3:** pick-entity → BLE name + MAC auto-filled from device registry; "Auto-detected" hint shows what was matched; honest "no Bluetooth info on file" fallback when the entity has no BT connection in HA
+- **v0.3** — pick-entity auto-fills BLE name + MAC from device registry
+- **v0.4** — tabs, RSSI noise filtering (median + EMA + hysteretic buckets), staleness detection, theme toggle, reconnect countdown, auto-resubscribe across WS drops
+- **v0.4.3** — HOT-zone freeze (honest UX at sub-meter range where physics noise > step delta)
+- **v0.5** — walking-verify mode: pick ANY controllable entity, Flash button, area picker, "I'm here ✓" writes `config/entity_registry/update`
+- **v0.5.8** — sticky Continue bar, mode-aware search placeholder, Flash style dropdown (Single / Loop), safe 2.5 s inter-toggle interval (avoids every vendor reset/pairing threshold), 60 s auto-stop, vibration feedback
 
 ## Quick start (early-access)
 
@@ -66,11 +70,22 @@ iOS users: install the HA Companion app — once the Companion feature request (
 
 ## Roadmap
 
-- **v0.1**: single-page skeleton, manual BLE address, local log only — *shipped*
-- **v0.2**: HA pairing + WS connection, entity picker, live RSSI streaming — *shipped*
-- **v0.3** (this commit): pick-entity auto-fills BLE name + MAC from device registry
-- **v0.4**: HA Insights server-side handler accepting `companion_scan_stream` subscription; card-side "Use phone scanner" toggle
-- **v0.5**: Flutter native port (iOS + background scan)
+- **v0.1 → v0.5.8**: all *shipped*. See Status above + git log for the detailed trail.
+
+### Deferred — v0.6 walking-verify expansion (parked 2026-05-19)
+
+Adding find methods beyond BLE warmer/colder and binary Flash, mirroring HA Insights' capability system. Confirmed user direction; not started.
+
+- **Touch-test mode** for sensors (third mode toggle, alongside BLE find / Identify & verify). Pick a temperature / motion / contact sensor → PWA subscribes via `subscribe_trigger` → modal shows live value → user touches the physical device → value changes → location confirmed.
+- **Capability-based filter** — currently domain-whitelisted (light / switch / fan / cover / lock / siren / scene / etc.). Tighten using `entity_registry` + `device_registry` data: query `supported_features` on each entity, filter out those that can't actually be physically identified.
+- **HA Insights `home_insights/identify` integration** — when present, use the vendor-aware identify endpoint (ZHA effect / Z-Wave Indicator CC / LIFX flash) instead of generic toggle. Includes the v1.10.13 live-power-consumption gate for critical-load safety. Graceful fallback to `light.toggle` when HA Insights isn't installed.
+
+Reference: HA Insights v1.10.5–v1.10.13 ships all the server-side primitives we'd call into. Memory: `find_my_ha_hardware_topology.md` (scanner-role architecture), `identify_vendor_pairing_thresholds.md` (reset/pairing thresholds we already respect with the 2.5 s loop interval).
+
+### Long-term
+
+- **v0.7**: Companion-app upstream proposal. Lifts the active BLE scan + RSSI streaming into the HA Companion app proper. PWA proves the workflow → Companion native gets iOS support + background scan for free.
+- **Flutter native port**: only if Companion-upstream is rejected. iOS + background scan otherwise blocked by Web Bluetooth limitations (see Platform notes).
 - **v0.6**: Upstream proposal to Companion app team
 
 ## Module layout (v0.2)
