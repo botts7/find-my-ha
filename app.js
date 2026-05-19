@@ -320,8 +320,20 @@
         try {
           await streamer.start(pickedEntity.entity_id, mac);
         } catch (e) {
-          // Streamer state already reflects error — surface the message inline.
-          showError("HA stream subscribe failed: " + (e.message ?? e));
+          // Special-case unknown_command: the user's ha-insights install
+          // doesn't have v1.15.0's companion_scan handlers yet. Local
+          // scan still works fine; don't scare the user with a red error
+          // banner for an expected server-side capability gap.
+          const code = e?.error?.code ?? e?.code ?? null;
+          const msg = e?.error?.message ?? e?.message ?? String(e);
+          if (code === "unknown_command" || /unknown[_ ]command/i.test(msg)) {
+            streamStateEl.textContent =
+              "Local-only — install ha-insights v1.15+ for HA-side stream sync.";
+            streamStateEl.style.display = "block";
+            streamStateEl.className = "hint";
+          } else {
+            showError("HA stream subscribe failed: " + msg);
+          }
         }
       } else if (!pickedEntity) {
         // Local-only scan; that's a supported mode per spec.
