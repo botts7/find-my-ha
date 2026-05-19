@@ -56,23 +56,34 @@
     }
     .sub { color: var(--muted); margin-bottom: 16px; font-size: 0.92em; }
 
-    /* Step indicator */
+    /* Step tabs */
     .steps {
       display: flex; gap: 6px; margin: 0 0 12px 0;
-      font-size: 0.78em;
+      font-size: 0.85em;
     }
     .step {
       flex: 1;
-      padding: 6px 8px;
+      padding: 10px 8px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--card);
       color: var(--muted);
       text-align: center;
-      transition: background 0.2s, color 0.2s;
+      cursor: pointer;
+      font: inherit; font-weight: 500;
+      margin: 0; width: auto;
+      transition: background 0.2s, color 0.2s, opacity 0.2s;
     }
-    .step.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .step:disabled { cursor: not-allowed; opacity: 0.5; }
+    .step.active {
+      background: var(--accent); color: white; border-color: var(--accent);
+      font-weight: 600;
+    }
     .step.done { background: var(--ok); color: white; border-color: var(--ok); }
+
+    /* Tab panels: only one visible at a time */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
     section {
       background: var(--card);
@@ -297,11 +308,11 @@
   </h1>
   <div class="sub">Walk around with your phone — the trend arrow tells you which way is warmer.</div>
 
-  <!-- Step indicator -->
+  <!-- Step tabs (clickable when reachable) -->
   <div class="steps" id="steps">
-    <div class="step" data-step="1">1. Connect</div>
-    <div class="step" data-step="2">2. Pick device</div>
-    <div class="step" data-step="3">3. Scan</div>
+    <button class="step" data-step="1" type="button">1. Connect</button>
+    <button class="step" data-step="2" type="button" disabled>2. Device</button>
+    <button class="step" data-step="3" type="button" disabled>3. Scan</button>
   </div>
 
   <!-- Chrome flag onboarding card — only shown when Web Bluetooth scan is unavailable -->
@@ -324,6 +335,7 @@
     </div>
   </div>
 
+  <div class="tab-panel" data-panel="1">
   <section id="setup-section">
     <div class="section-head">
       <h2>Home Assistant</h2>
@@ -347,8 +359,10 @@
       except to your HA instance.
     </div>
   </section>
+  </div><!-- /tab-panel 1 -->
 
-  <section id="entity-section" class="collapsed">
+  <div class="tab-panel" data-panel="2">
+  <section id="entity-section">
     <div class="section-head">
       <h2>Target device</h2>
       <button id="refresh-entities-btn" class="secondary small">Refresh</button>
@@ -362,8 +376,10 @@
       entities. Connect first to populate.
     </div>
   </section>
+  </div><!-- /tab-panel 2 -->
 
-  <section id="scan-section" class="collapsed">
+  <div class="tab-panel" data-panel="3">
+  <section id="scan-section">
     <details>
       <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em; margin-bottom: 8px;">Advanced filters (override auto-detected)</summary>
       <label for="ble-name" style="margin-top: 8px;">BLE name prefix filter (auto-filled from entity)</label>
@@ -386,12 +402,13 @@
       <div class="meta" id="rssi-meta"></div>
     </div>
     <div id="stream-state" class="hint" style="display: none;"></div>
-    <details style="margin-top: 16px;">
+    <details style="margin-top: 16px;" open>
       <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em;">Nearby BLE devices (tap to switch target)</summary>
       <div id="nearby-list" class="nearby-list"></div>
     </details>
     <button id="stop-btn" class="secondary">Stop scan</button>
   </section>
+  </div><!-- /tab-panel 3 -->
 
   <script src="ws_client.js"></script>
   <script src="entity_picker.js"></script>
