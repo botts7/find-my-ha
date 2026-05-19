@@ -23,8 +23,15 @@
       --ok: #22c55e;
       --pending: #eab308;
     }
+    html[data-theme="light"] {
+      --bg: #f8fafc;
+      --fg: #0f172a;
+      --muted: #64748b;
+      --card: #ffffff;
+      --border: #e2e8f0;
+    }
     @media (prefers-color-scheme: light) {
-      :root {
+      html:not([data-theme]) {
         --bg: #f8fafc;
         --fg: #0f172a;
         --muted: #64748b;
@@ -40,8 +47,33 @@
       min-height: 100vh;
     }
     body { padding: 16px; padding-bottom: 80px; max-width: 560px; margin: 0 auto; }
-    h1 { margin: 0 0 4px 0; font-size: 1.5em; }
+    h1 { margin: 0 0 4px 0; font-size: 1.5em; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    h1 .theme-toggle {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--fg); cursor: pointer;
+      padding: 6px 10px; border-radius: 8px;
+      width: auto; margin: 0; font-size: 0.7em;
+    }
     .sub { color: var(--muted); margin-bottom: 16px; font-size: 0.92em; }
+
+    /* Step indicator */
+    .steps {
+      display: flex; gap: 6px; margin: 0 0 12px 0;
+      font-size: 0.78em;
+    }
+    .step {
+      flex: 1;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--muted);
+      text-align: center;
+      transition: background 0.2s, color 0.2s;
+    }
+    .step.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .step.done { background: var(--ok); color: white; border-color: var(--ok); }
+
     section {
       background: var(--card);
       border: 1px solid var(--border);
@@ -49,6 +81,7 @@
       padding: 16px;
       margin-bottom: 12px;
     }
+    section.collapsed { display: none; }
     .section-head {
       display: flex; align-items: center; justify-content: space-between;
       gap: 8px; margin-bottom: 8px;
@@ -75,27 +108,55 @@
     }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
     .rssi-display {
-      text-align: center; padding: 24px 0;
+      text-align: center; padding: 32px 0;
       font-family: ui-monospace, SFMono-Regular, monospace;
     }
     .rssi-value {
-      font-size: 3.5em; font-weight: 700; line-height: 1;
+      font-size: 4.5em; font-weight: 700; line-height: 1;
     }
     .rssi-label {
-      font-size: 1em; text-transform: uppercase;
-      letter-spacing: 0.2em; margin-top: 6px;
+      font-size: 1.1em; text-transform: uppercase;
+      letter-spacing: 0.2em; margin-top: 10px;
     }
     .rssi-trend {
-      font-size: 1.6em; margin-top: 16px;
+      font-size: 2.6em; margin-top: 24px;
+      font-weight: 600;
     }
     .rssi-bucket-hot { color: var(--hot); }
     .rssi-bucket-warm { color: var(--warm); }
     .rssi-bucket-cool { color: var(--cool); }
     .rssi-bucket-cold { color: var(--cold); }
-    .meta { font-size: 0.8em; color: var(--muted); margin-top: 8px; }
+    .meta { font-size: 0.85em; color: var(--muted); margin-top: 12px; }
+
+    /* Active-scan pulse — wraps the rssi card when streaming */
+    @keyframes scan-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+      50% { box-shadow: 0 0 0 12px rgba(34, 197, 94, 0); }
+    }
+    section.scanning {
+      animation: scan-pulse 2s ease-in-out infinite;
+      border-color: var(--ok);
+    }
+
+    /* Pulse on each fresh sample */
+    @keyframes sample-flash {
+      0% { transform: scale(1); }
+      40% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+    .rssi-value.flash { animation: sample-flash 280ms ease-out; }
+
     .error {
       background: rgba(239, 68, 68, 0.12);
       color: var(--hot);
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin: 12px 0;
+      font-size: 0.9em;
+    }
+    .warn {
+      background: rgba(234, 179, 8, 0.12);
+      color: var(--pending);
       padding: 10px 12px;
       border-radius: 8px;
       margin: 12px 0;
@@ -136,6 +197,15 @@
       color: white; background: var(--ok); border-color: var(--ok);
     }
     .conn-error        { color: var(--hot); border-color: var(--hot); }
+    .conn-reconnecting { color: var(--pending); border-color: var(--pending); }
+
+    /* Reconnect countdown row */
+    .reconnect-row {
+      margin-top: 10px;
+      display: flex; gap: 8px; align-items: center; justify-content: space-between;
+      font-size: 0.85em; color: var(--muted);
+    }
+    .reconnect-row button.small { margin: 0; }
 
     /* Entity picker */
     .entity-list {
@@ -180,11 +250,79 @@
       display: flex; gap: 8px; align-items: center;
     }
     .row-flex > input { flex: 1; }
+
+    /* Nearby BLE devices list */
+    .nearby-list {
+      max-height: 200px; overflow-y: auto;
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .nearby-list:empty { display: none; }
+    .nearby-row {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 0.88em;
+    }
+    .nearby-row:last-child { border-bottom: none; }
+    .nearby-row:hover { background: rgba(37, 99, 235, 0.08); }
+    .nearby-name { flex: 1; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
+    .nearby-rssi { color: var(--muted); white-space: nowrap; }
+
+    /* Flag-onboarding card */
+    .flag-card {
+      background: rgba(234, 179, 8, 0.08);
+      border: 1px solid var(--pending);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      font-size: 0.9em;
+    }
+    .flag-card code { background: var(--bg); }
+    .flag-card .copy-row {
+      display: flex; gap: 8px; align-items: stretch; margin-top: 10px;
+    }
+    .flag-card .copy-row input {
+      flex: 1; font-family: ui-monospace, monospace; font-size: 0.85em;
+    }
   </style>
 </head>
 <body>
-  <h1>🔍 Find My HA Device</h1>
-  <div class="sub">Walk around with your phone — the trend arrow tells you which way the device is.</div>
+  <h1>
+    <span>🔍 Find My HA Device</span>
+    <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">🌗</button>
+  </h1>
+  <div class="sub">Walk around with your phone — the trend arrow tells you which way is warmer.</div>
+
+  <!-- Step indicator -->
+  <div class="steps" id="steps">
+    <div class="step" data-step="1">1. Connect</div>
+    <div class="step" data-step="2">2. Pick device</div>
+    <div class="step" data-step="3">3. Scan</div>
+  </div>
+
+  <!-- Chrome flag onboarding card — only shown when Web Bluetooth scan is unavailable -->
+  <div id="flag-card" class="flag-card" style="display: none;">
+    <strong>Enable active BLE scan</strong>
+    <p style="margin: 6px 0 0 0;">
+      Chrome on Android needs an experimental flag to scan for BLE
+      advertisements. One-time setup:
+    </p>
+    <ol style="margin: 6px 0 0 18px; padding: 0;">
+      <li>Open the URL below in Chrome (copy → paste)</li>
+      <li>Switch the highlighted flag to <strong>Enabled</strong></li>
+      <li>Tap <strong>Relaunch</strong></li>
+      <li>Come back here — page will detect it automatically</li>
+    </ol>
+    <div class="copy-row">
+      <input id="flag-url" type="text" readonly
+             value="chrome://flags/#enable-experimental-web-platform-features" />
+      <button id="copy-flag-btn" type="button" class="secondary small" style="white-space: nowrap;">Copy</button>
+    </div>
+  </div>
 
   <section id="setup-section">
     <div class="section-head">
@@ -192,10 +330,15 @@
       <span id="conn-state" class="conn-pill conn-disconnected">disconnected</span>
     </div>
     <label for="ha-url">URL</label>
-    <input type="text" id="ha-url" placeholder="https://homeassistant.local:8123" autocomplete="url" />
+    <input type="text" id="ha-url" placeholder="https://homeassistant.local:8123 or 192.168.x.x" autocomplete="url" />
     <label for="ha-token" style="margin-top: 12px;">Long-lived access token</label>
-    <input type="password" id="ha-token" placeholder="paste from Profile → Security" />
+    <input type="password" id="ha-token" placeholder="paste from HA Profile → Security" />
     <div id="conn-detail" class="error" style="display: none;"></div>
+    <div id="url-warn" class="warn" style="display: none;"></div>
+    <div id="reconnect-row" class="reconnect-row" style="display: none;">
+      <span id="reconnect-text"></span>
+      <button id="retry-now-btn" type="button" class="secondary small">Retry now</button>
+    </div>
     <button id="save-creds-btn" class="secondary">Save credentials (local only)</button>
     <button id="connect-btn">Connect to Home Assistant</button>
     <button id="disconnect-btn" class="secondary" style="display: none;">Disconnect</button>
@@ -205,9 +348,9 @@
     </div>
   </section>
 
-  <section id="entity-section">
+  <section id="entity-section" class="collapsed">
     <div class="section-head">
-      <h2>Target entity</h2>
+      <h2>Target device</h2>
       <button id="refresh-entities-btn" class="secondary small">Refresh</button>
     </div>
     <input type="search" id="entity-search" placeholder="Search BLE-trackable entities…" />
@@ -216,21 +359,22 @@
     <div id="entity-selected" class="entity-selected" style="display: none;"></div>
     <div class="hint">
       Lists <code>device_tracker</code> and BLE-hinted <code>binary_sensor</code>
-      entities from your HA entity registry. Connect first to populate.
+      entities. Connect first to populate.
     </div>
   </section>
 
-  <section id="scan-section">
-    <label for="ble-name">BLE name prefix filter (auto-filled from entity)</label>
-    <input type="text" id="ble-name" placeholder="e.g. Hue White" />
-    <label for="ble-mac" style="margin-top: 12px;">BLE MAC (auto-filled, sent to HA for cross-ref)</label>
-    <input type="text" id="ble-mac" placeholder="AA:BB:CC:DD:EE:FF" />
+  <section id="scan-section" class="collapsed">
+    <details>
+      <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em; margin-bottom: 8px;">Advanced filters (override auto-detected)</summary>
+      <label for="ble-name" style="margin-top: 8px;">BLE name prefix filter (auto-filled from entity)</label>
+      <input type="text" id="ble-name" placeholder="e.g. Hue White" />
+      <label for="ble-mac" style="margin-top: 12px;">BLE MAC (auto-filled, sent to HA for cross-ref)</label>
+      <input type="text" id="ble-mac" placeholder="AA:BB:CC:DD:EE:FF" />
+    </details>
     <button id="scan-btn">📡 Start scan</button>
     <div id="scan-error" class="error" style="display: none;"></div>
     <div class="hint">
-      Web Bluetooth requires Chrome on Android (iOS Safari doesn't expose
-      the API). On first scan you'll be prompted for Bluetooth permission.
-      Streaming kicks in only when you've connected to HA and picked an entity.
+      Web Bluetooth requires Chrome/Edge on Android. iOS Safari doesn't expose the API.
     </div>
   </section>
 
@@ -242,6 +386,10 @@
       <div class="meta" id="rssi-meta"></div>
     </div>
     <div id="stream-state" class="hint" style="display: none;"></div>
+    <details style="margin-top: 16px;">
+      <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em;">Nearby BLE devices (tap to switch target)</summary>
+      <div id="nearby-list" class="nearby-list"></div>
+    </details>
     <button id="stop-btn" class="secondary">Stop scan</button>
   </section>
 
