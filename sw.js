@@ -15,7 +15,7 @@
 // gets fresh code every load when online, falls back to cache when
 // offline. GitHub Pages is fast; ~50-200 ms latency is acceptable.
 
-const CACHE_VERSION = "find-my-ha-v0.5.6";
+const CACHE_VERSION = "find-my-ha-v0.5.7";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
