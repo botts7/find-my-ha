@@ -16,6 +16,12 @@
 (function (global) {
   "use strict";
 
+  // HA's device_registry connection types we treat as Bluetooth-bearing.
+  // "bluetooth" is the canonical one (BTHome, private_ble_device, etc.).
+  // "mac" can also appear for devices that don't distinguish — we only
+  // accept those when the integration is BLE-related.
+  const BT_CONNECTION_TYPES = new Set(["bluetooth"]);
+
   const BLE_PLATFORM_HINTS = [
     "bluetooth",
     "bluetooth_le_tracker",
@@ -49,6 +55,38 @@
     return false;
   }
 
+  // Look up a device's Bluetooth MAC + a sensible short name to use as a
+  // BLE namePrefix filter. Returns null when the device has no BLE
+  // connection on record — that's the signal to the UI that auto-filter
+  // isn't possible for this entity.
+  function bleInfoFromDevice(device) {
+    if (!device) return null;
+    const connections = device.connections ?? [];
+    let mac = null;
+    for (const c of connections) {
+      // connections is shaped [[type, value], ...]. BT MACs come as
+      // ["bluetooth", "AA:BB:CC:..."].
+      if (Array.isArray(c) && c.length >= 2 && BT_CONNECTION_TYPES.has(c[0])) {
+        mac = String(c[1]).toUpperCase();
+        break;
+      }
+    }
+    const displayName = device.name_by_user || device.name || "";
+    // First space-separated word is usually the best namePrefix match:
+    // "Hue White lamp 1" → "Hue", "ESPHome bedroom beacon" → "ESPHome",
+    // "AirTag - Keys" → "AirTag". The user can hand-edit if the actual
+    // BLE advertisement uses a different prefix.
+    const namePrefix = displayName.split(/[\s\-_]+/)[0] || "";
+    if (!mac && !namePrefix) return null;
+    return {
+      bluetooth_mac: mac,
+      device_name: displayName,
+      suggested_name_prefix: namePrefix,
+      manufacturer: device.manufacturer || null,
+      model: device.model || null,
+    };
+  }
+
   function EntityPicker(opts) {
     const inputEl = opts.inputEl;     // <input type="text"> (search box)
     const listEl = opts.listEl;       // <div> for results (we'll render <button>s)
@@ -58,6 +96,9 @@
     let allEntities = [];
     let filtered = [];
     let selected = null;
+    // device_id -> device record from HA's device_registry. Used by
+    // getBleInfo() to look up an entity's underlying device.
+    let devicesById = new Map();
 
     function setStatus(text, isError) {
       if (!statusEl) return;
@@ -128,7 +169,18 @@
       async load(wsClient) {
         setStatus("Loading entities…");
         try {
-          const list = await wsClient.request({ type: "config/entity_registry/list" });
+          // Pull entity + device registries in parallel. Device registry
+          // is best-effort — if it fails, picker still works without
+          // auto-filter info.
+          const [list, deviceList] = await Promise.all([
+            wsClient.request({ type: "config/entity_registry/list" }),
+            wsClient
+              .request({ type: "config/device_registry/list" })
+              .catch(() => []),
+          ]);
+          devicesById = new Map(
+            (deviceList ?? []).map((d) => [d.id, d]),
+          );
           allEntities = (list ?? [])
             .filter(isLikelyBleTrackable)
             .sort((a, b) => {
@@ -163,10 +215,19 @@
         allEntities = [];
         filtered = [];
         selected = null;
+        devicesById = new Map();
         setStatus("");
         render();
       },
       getSelected() { return selected; },
+      // Resolve an entity registry entry to its device's BLE info
+      // (MAC + name + suggested namePrefix). Returns null when the
+      // device registry isn't loaded, the entity has no device, or the
+      // device has no Bluetooth connection on record.
+      getBleInfo(entry) {
+        if (!entry || !entry.device_id) return null;
+        return bleInfoFromDevice(devicesById.get(entry.device_id));
+      },
     };
   }
 

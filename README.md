@@ -28,7 +28,12 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **v0.2 — WebSocket streaming.** Use cases:
+🚧 **v0.3 — Auto-filter from picked entity.** Pick an entity, the BLE
+name prefix + MAC fields auto-populate from HA's device registry
+(`config/device_registry/list`), so the local trend arrow tracks one
+device instead of averaging across every BLE advertiser in the room.
+
+Cumulative feature set:
 - Manual entry of target Bluetooth name/address → live RSSI display (local-only mode still supported)
 - HA URL + token pairing with persistent connection
 - Connection-state indicator (disconnected / connecting / authed / streaming / error)
@@ -36,6 +41,7 @@ Phone (PWA in Chrome)                Home Assistant
 - Searchable HA entity picker (loaded from `config/entity_registry/list`)
 - Live RSSI streaming to HA Insights via `home_insights/companion_scan_*` messages, server-rate-limited (default 4 Hz)
 - Graceful teardown on stop / disconnect
+- **v0.3:** pick-entity → BLE name + MAC auto-filled from device registry; "Auto-detected" hint shows what was matched; honest "no Bluetooth info on file" fallback when the entity has no BT connection in HA
 
 ## Quick start (early-access)
 
@@ -61,10 +67,11 @@ iOS users: install the HA Companion app — once the Companion feature request (
 ## Roadmap
 
 - **v0.1**: single-page skeleton, manual BLE address, local log only — *shipped*
-- **v0.2** (this commit): HA pairing + WS connection, entity picker, live RSSI streaming
-- **v0.3**: HA Insights server-side handler accepting `companion_scan_stream` subscription; card-side "Use phone scanner" toggle
-- **v0.4**: Flutter native port (iOS + background scan)
-- **v0.5**: Upstream proposal to Companion app team
+- **v0.2**: HA pairing + WS connection, entity picker, live RSSI streaming — *shipped*
+- **v0.3** (this commit): pick-entity auto-fills BLE name + MAC from device registry
+- **v0.4**: HA Insights server-side handler accepting `companion_scan_stream` subscription; card-side "Use phone scanner" toggle
+- **v0.5**: Flutter native port (iOS + background scan)
+- **v0.6**: Upstream proposal to Companion app team
 
 ## Module layout (v0.2)
 
