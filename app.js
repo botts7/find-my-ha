@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.5.8";
+  const APP_VERSION = "0.5.9";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -590,6 +590,12 @@
     updateStepIndicator();
     // Auto-scroll to top so the user sees the new panel from the start.
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // v0.5.9: on phones, picking through 50+ entities is painful without
+    // type-to-filter ready. Auto-focus search box when arriving on Tab 2.
+    // Wait one tick so display:block has applied; otherwise focus is no-op.
+    if (n === 2 && entitySearchEl) {
+      Promise.resolve().then(() => entitySearchEl.focus({ preventScroll: true }));
+    }
   }
 
   // 1 = Setup tab reachable always; 2 reachable when connected; 3 when
