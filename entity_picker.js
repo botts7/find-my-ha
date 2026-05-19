@@ -35,6 +35,17 @@
 
   const BLE_ID_KEYWORDS = ["ble", "bluetooth", "beacon", "ibeacon", "bthome"];
 
+  // v0.5: domains that can be physically identified by toggling state.
+  // Light/switch/fan are obvious. Cover (blinds) opens/closes visibly.
+  // Lock has a click. Siren makes noise. media_player has play/pause.
+  // Scenes/scripts/automations can be activated; they may visibly fire.
+  const IDENTIFIABLE_DOMAINS = new Set([
+    "light", "switch", "fan", "cover", "lock", "siren",
+    "media_player", "scene", "script", "automation",
+    "input_boolean", "humidifier", "valve", "vacuum",
+    "remote", "climate",
+  ]);
+
   function isLikelyBleTrackable(entry) {
     const eid = entry.entity_id ?? "";
     const domain = eid.split(".")[0];
@@ -53,6 +64,12 @@
       }
     }
     return false;
+  }
+
+  function isIdentifiable(entry) {
+    const eid = entry.entity_id ?? "";
+    const domain = eid.split(".")[0];
+    return IDENTIFIABLE_DOMAINS.has(domain);
   }
 
   // Look up a device's Bluetooth MAC + a sensible short name to use as a
@@ -93,12 +110,30 @@
     const statusEl = opts.statusEl;   // <div> for "Loading entities…" etc.
     const onPick = opts.onPick;       // (entry) => void
 
-    let allEntities = [];
+    let allEntities = [];      // full registry list (filtered to BLE OR identifiable)
     let filtered = [];
     let selected = null;
+    // v0.5: mode toggle — "ble" (default) shows BLE-trackable entities for
+    // warmer/colder; "identify" shows controllable entities for the
+    // flash-and-verify workflow.
+    let mode = "ble";
     // device_id -> device record from HA's device_registry. Used by
     // getBleInfo() to look up an entity's underlying device.
     let devicesById = new Map();
+    // Full registry pulled once; applyMode re-filters in-place.
+    let rawEntities = [];
+
+    function applyMode() {
+      const predicate = mode === "identify" ? isIdentifiable : isLikelyBleTrackable;
+      allEntities = rawEntities
+        .filter(predicate)
+        .sort((a, b) => {
+          const an = (a.name || a.original_name || a.entity_id).toLowerCase();
+          const bn = (b.name || b.original_name || b.entity_id).toLowerCase();
+          return an.localeCompare(bn);
+        });
+      applyFilter();
+    }
 
     function setStatus(text, isError) {
       if (!statusEl) return;
@@ -181,21 +216,20 @@
           devicesById = new Map(
             (deviceList ?? []).map((d) => [d.id, d]),
           );
-          allEntities = (list ?? [])
-            .filter(isLikelyBleTrackable)
-            .sort((a, b) => {
-              const an = (a.name || a.original_name || a.entity_id).toLowerCase();
-              const bn = (b.name || b.original_name || b.entity_id).toLowerCase();
-              return an.localeCompare(bn);
-            });
+          rawEntities = list ?? [];
+          applyMode();
           if (!allEntities.length) {
             setStatus(
-              "No BLE-trackable entities found. Add a Bluetooth proxy, "
-              + "BTHome device, or iBeacon to get started.",
+              mode === "identify"
+                ? "No identifiable entities found in your HA instance."
+                : "No BLE-trackable entities. Add a Bluetooth proxy, "
+                  + "BTHome device, or iBeacon to enable BLE find — or "
+                  + "switch to Identify mode to walk-verify other entities.",
               true,
             );
           } else {
-            setStatus(`${allEntities.length} BLE-trackable entities loaded.`);
+            const label = mode === "identify" ? "identifiable" : "BLE-trackable";
+            setStatus(`${allEntities.length} ${label} entities loaded.`);
           }
           // Restore previous selection if it still exists.
           const lastId = localStorage.getItem("ha_entity_id");
@@ -206,11 +240,22 @@
               if (onPick) onPick(prior);
             }
           }
-          applyFilter();
         } catch (e) {
           setStatus("Failed to load entities: " + (e.message ?? e), true);
         }
       },
+      setMode(newMode) {
+        if (newMode !== "ble" && newMode !== "identify") return;
+        if (mode === newMode) return;
+        mode = newMode;
+        selected = null;
+        if (rawEntities.length) {
+          applyMode();
+          const label = mode === "identify" ? "identifiable" : "BLE-trackable";
+          setStatus(`${allEntities.length} ${label} entities.`);
+        }
+      },
+      getMode() { return mode; },
       clear() {
         allEntities = [];
         filtered = [];
@@ -227,6 +272,12 @@
       getBleInfo(entry) {
         if (!entry || !entry.device_id) return null;
         return bleInfoFromDevice(devicesById.get(entry.device_id));
+      },
+      // True when the entity has Bluetooth info in the device registry
+      // (i.e. eligible for warmer/colder). Distinct from the broader
+      // BLE_TRACKABLE filter that just guesses from entity_id / platform.
+      isBleTrackable(entry) {
+        return this.getBleInfo(entry) !== null;
       },
     };
   }

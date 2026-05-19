@@ -85,6 +85,45 @@
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
+    /* Mode toggle inside Tab 2 (BLE find vs Identify & verify) */
+    .mode-toggle {
+      display: flex; gap: 4px; margin: 0 0 10px 0;
+      background: var(--bg); border-radius: 8px; padding: 4px;
+      border: 1px solid var(--border);
+    }
+    .mode-btn {
+      flex: 1; padding: 8px 10px; border: none;
+      background: transparent; color: var(--muted);
+      border-radius: 6px; cursor: pointer;
+      font: inherit; font-size: 0.9em; font-weight: 500;
+      margin: 0; width: auto;
+    }
+    .mode-btn.active {
+      background: var(--accent); color: white;
+    }
+
+    /* Identify panel inside Tab 3 */
+    .identify-state {
+      background: var(--bg); padding: 12px;
+      border-radius: 10px; margin: 12px 0;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.9em;
+    }
+    .identify-state .label { color: var(--muted); }
+    .identify-state .value { font-weight: 600; }
+    .area-row {
+      display: flex; gap: 8px; align-items: stretch;
+      margin-top: 12px;
+    }
+    .area-row select { flex: 1; }
+    .area-row button { width: auto; margin: 0; white-space: nowrap; padding: 0 16px; }
+    .confirm-banner {
+      background: rgba(34, 197, 94, 0.12);
+      border-left: 3px solid var(--ok);
+      padding: 10px 12px; border-radius: 6px;
+      margin: 12px 0; font-size: 0.9em;
+    }
+
     section {
       background: var(--card);
       border: 1px solid var(--border);
@@ -367,6 +406,14 @@
       <h2>Target device</h2>
       <button id="refresh-entities-btn" class="secondary small">Refresh</button>
     </div>
+    <div class="mode-toggle" role="tablist" aria-label="Find mode">
+      <button id="mode-ble-btn" class="mode-btn active" type="button" data-mode="ble">🔍 BLE find</button>
+      <button id="mode-identify-btn" class="mode-btn" type="button" data-mode="identify">🔆 Identify & verify</button>
+    </div>
+    <div class="hint" id="mode-help">
+      <strong>BLE find</strong>: warmer/colder for BLE-trackable devices (Hue,
+      AirTag, BTHome, BLE locks).
+    </div>
     <input type="search" id="entity-search" placeholder="Search BLE-trackable entities…" />
     <div id="entity-list" class="entity-list"></div>
     <div id="entity-status" class="hint" style="display: none;"></div>
@@ -379,6 +426,27 @@
   </div><!-- /tab-panel 2 -->
 
   <div class="tab-panel" data-panel="3">
+  <!-- v0.5: Identify panel — shown when mode === "identify" -->
+  <section id="identify-section" style="display: none;">
+    <h2 style="margin: 0 0 6px 0; font-size: 1em;">Find by flashing</h2>
+    <div class="hint" style="margin-bottom: 8px;">
+      Walk through your home, flash the entity, and confirm which room you're in.
+      Works for any controllable entity — lights, switches, fans, locks, sirens.
+    </div>
+    <div id="identify-target" class="entity-selected" style="display: none;"></div>
+    <div id="identify-state" class="identify-state"></div>
+    <button id="flash-btn">🔆 Flash this entity</button>
+    <div id="identify-error" class="error" style="display: none;"></div>
+    <div id="identify-confirmed" class="confirm-banner" style="display: none;"></div>
+    <label for="area-select" style="margin-top: 14px;">When you find it, confirm the room:</label>
+    <div class="area-row">
+      <select id="area-select">
+        <option value="">— pick area —</option>
+      </select>
+      <button id="confirm-area-btn" type="button">I'm here ✓</button>
+    </div>
+  </section>
+
   <section id="scan-section">
     <details>
       <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em; margin-bottom: 8px;">Advanced filters (override auto-detected)</summary>
