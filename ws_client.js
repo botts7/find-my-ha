@@ -50,6 +50,11 @@
     let userClosed = false;
     let backoffIndex = 0;
     let reconnectTimer = null;
+    // v0.4: surface countdown so the UI can show "reconnecting in Xs" +
+    // a "Retry now" button instead of just an infinite "connecting…".
+    let reconnectScheduledAt = null;  // epoch ms when the timer was set
+    let reconnectDelayMs = 0;
+    let reconnectAttempt = 0;         // 1-indexed; 0 = no retry pending
     let nextId = 1;
     let pending = new Map(); // id -> { resolve, reject }
     let haUrl = "";
@@ -159,6 +164,7 @@
       }
       if (msg.type === "auth_ok") {
         backoffIndex = 0; // successful auth resets backoff
+        reconnectAttempt = 0;
         setState(STATES.AUTHED);
         return;
       }
@@ -230,10 +236,21 @@
       clearReconnect();
       const delay = BACKOFF_MS[Math.min(backoffIndex, BACKOFF_MS.length - 1)];
       backoffIndex++;
+      reconnectDelayMs = delay;
+      reconnectScheduledAt = Date.now();
+      reconnectAttempt += 1;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
+        reconnectScheduledAt = null;
+        reconnectDelayMs = 0;
         openSocket();
       }, delay);
+      // Re-emit current state so subscribers re-render countdown UI even
+      // though state itself didn't change. UI reads getReconnectInfo()
+      // from the listener callback.
+      listeners.forEach((cb) => {
+        try { cb({ state, error: lastError }); } catch (_) { /* ignore */ }
+      });
     }
 
     function clearReconnect() {
@@ -241,6 +258,29 @@
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      reconnectScheduledAt = null;
+      reconnectDelayMs = 0;
+    }
+
+    // v0.4: let the UI bypass the backoff timer. Useful for the "Retry
+    // now" button when the user knows the network is back.
+    function retryNow() {
+      if (userClosed) return;
+      clearReconnect();
+      openSocket();
+    }
+
+    function getReconnectInfo() {
+      if (reconnectScheduledAt === null) return null;
+      const remainingMs = Math.max(
+        0,
+        reconnectScheduledAt + reconnectDelayMs - Date.now(),
+      );
+      return {
+        attemptNumber: reconnectAttempt,
+        remainingMs,
+        delayMs: reconnectDelayMs,
+      };
     }
 
     function disconnect() {
@@ -266,12 +306,14 @@
       STATES,
       connect,
       disconnect,
+      retryNow,
       request,
       send,
       onStateChange,
       onMessage,
       getState,
       getLastError,
+      getReconnectInfo,
       markStreaming,
     };
   }

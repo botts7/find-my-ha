@@ -18,7 +18,7 @@
 
   function Streamer(opts) {
     const wsClient = opts.wsClient;     // HaWsClient instance
-    const onStateChange = opts.onStateChange; // (s) => void: idle / subscribing / streaming / error
+    const onStateChange = opts.onStateChange; // (s) => void: idle / subscribing / streaming / error / resubscribing
 
     let subscriptionId = null;
     let maxRateHz = 4;              // server tells us; default per spec
@@ -27,10 +27,67 @@
     let entityId = null;
     let bleMac = null;
     let streamingActive = false;    // local state separate from ws state
+    // v0.4: auto-resubscribe across WS reconnects. If the user is mid-
+    // walk and the phone briefly drops WiFi, the streamer state would
+    // be lost on the old code path — the scan kept producing samples
+    // locally but they were dropped on the floor server-side. Now we
+    // observe ws state and re-fire the subscribe automatically.
+    let lastWsState = wsClient.getState();
+    wsClient.onStateChange(({ state }) => {
+      const wasAuthed =
+        lastWsState === "authed" || lastWsState === "streaming";
+      const isAuthed = state === "authed" || state === "streaming";
+      lastWsState = state;
+      // Resubscribe condition: we WERE streaming (user expects to be
+      // tracking), WS just came back to authed, and we no longer have
+      // a valid subscription_id.
+      if (streamingActive && !subscriptionId && isAuthed && !wasAuthed) {
+        _resubscribe();
+      }
+    });
 
     function setState(s) {
       if (onStateChange) {
         try { onStateChange(s); } catch (_) { /* ignore */ }
+      }
+    }
+
+    async function _resubscribe() {
+      if (!entityId) return;
+      setState("resubscribing");
+      try {
+        const payload = {
+          type: "home_insights/companion_scan_subscribe",
+          entity_id: entityId,
+        };
+        if (bleMac) payload.ble_mac = bleMac;
+        const result = await wsClient.request(payload);
+        if (!streamingActive) {
+          // User stopped during reconnect — tear the new sub down.
+          if (result?.subscription_id) {
+            wsClient.send({
+              type: "home_insights/companion_scan_unsubscribe",
+              subscription_id: result.subscription_id,
+            });
+          }
+          setState("idle");
+          return;
+        }
+        subscriptionId = result?.subscription_id ?? null;
+        if (typeof result?.max_sample_rate_hz === "number" && result.max_sample_rate_hz > 0) {
+          maxRateHz = result.max_sample_rate_hz;
+        }
+        if (subscriptionId) {
+          wsClient.markStreaming(true);
+          setState("streaming");
+          startEmitLoop();
+        } else {
+          setState("error");
+        }
+      } catch (_) {
+        // Reconnect attempt failed — WS will retry; we'll re-fire from
+        // the next state-change event. Don't flap the UI to "error".
+        setState("resubscribing");
       }
     }
 
@@ -114,6 +171,10 @@
       pending = null;
       const subId = subscriptionId;
       subscriptionId = null;
+      // v0.4: clear stored creds too so a stale entity doesn't get
+      // auto-resubscribed if WS bounces after the user pressed Stop.
+      entityId = null;
+      bleMac = null;
       wsClient.markStreaming(false);
       setState("idle");
       if (subId) {
