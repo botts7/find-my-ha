@@ -389,7 +389,10 @@
     </div>
   </div>
 
-  <div class="tab-panel" data-panel="1">
+  <!-- v0.5.5: Tab 1 starts with .active in HTML so the Setup form is
+       visible even if JS crashes during init. JS can still switch
+       panels normally; this is just a static safety net. -->
+  <div class="tab-panel active" data-panel="1">
   <section id="setup-section">
     <div class="section-head">
       <h2>Home Assistant</h2>

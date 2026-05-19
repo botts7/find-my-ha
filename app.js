@@ -1,16 +1,50 @@
-// Find My HA Device — main wiring (v0.4).
+// Find My HA Device — main wiring.
 //
 // Controller — owns DOM refs and orchestrates the scanner ↔ ws_client ↔
-// streamer ↔ entity_picker modules. Logic lives in those modules; this
-// file is glue + step-flow UX + reconnect countdown + haptic feedback.
+// streamer ↔ entity_picker modules.
+
+// v0.5.5: surface JS errors on-screen instead of failing silently.
+// Without this, a crash during IIFE init left the user with a blank
+// page below the step bar and no way to see what went wrong. Now any
+// uncaught error becomes a red banner above the rest of the UI, with
+// the error message + file:line. Captures both window.error and
+// unhandledrejection so async failures show up too.
+(function installErrorBanner() {
+  const banner = document.createElement("div");
+  banner.id = "js-error-banner";
+  banner.style.cssText =
+    "display:none;position:sticky;top:0;left:0;right:0;z-index:9999;"
+    + "background:#ef4444;color:white;padding:10px 14px;font:13px/1.4 "
+    + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
+    + "border-bottom:2px solid #b91c1c;white-space:pre-wrap;";
+  function show(msg) {
+    banner.style.display = "block";
+    banner.textContent = (banner.textContent ? banner.textContent + "\n\n" : "")
+      + msg;
+  }
+  function attach() {
+    if (banner.isConnected) return;
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+  window.addEventListener("error", (e) => {
+    attach();
+    const where = e.filename ? ` @ ${e.filename}:${e.lineno}:${e.colno}` : "";
+    show("JS error: " + (e.message || "(no message)") + where);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    attach();
+    const r = e.reason;
+    const msg = r && r.message ? r.message : String(r);
+    show("Unhandled promise rejection: " + msg);
+  });
+})();
 
 (function () {
   "use strict";
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  // BUMP THIS in lockstep with sw.js CACHE_VERSION on every release.
-  const APP_VERSION = "0.5.4";
+  const APP_VERSION = "0.5.5";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
