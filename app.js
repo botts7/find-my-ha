@@ -17,9 +17,11 @@
     + "background:#ef4444;color:white;padding:10px 14px;font:13px/1.4 "
     + "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
     + "border-bottom:2px solid #b91c1c;white-space:pre-wrap;";
+  const messages = document.createElement("div");
+  banner.appendChild(messages);
   function show(msg) {
     banner.style.display = "block";
-    banner.textContent = (banner.textContent ? banner.textContent + "\n\n" : "")
+    messages.textContent = (messages.textContent ? messages.textContent + "\n\n" : "")
       + msg;
   }
   function attach() {
@@ -37,6 +39,42 @@
     const msg = r && r.message ? r.message : String(r);
     show("Unhandled promise rejection: " + msg);
   });
+  // Expose globally so the rest of the page can post non-error
+  // diagnostics here too if we ever need to.
+  window.__finalErrorShow = show;
+})();
+
+// v0.5.6: a button at the very bottom of the page that nukes the SW
+// + caches + localStorage and reloads. Self-rescue for users stuck on
+// stale state. Independent of the rest of the IIFE so it works even if
+// init crashes.
+(function installForceUpdateButton() {
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.createElement("button");
+    btn.textContent = "🔄 Force update (clear cache + reload)";
+    btn.style.cssText =
+      "display:block;width:100%;max-width:560px;margin:24px auto 8px;"
+      + "padding:10px 14px;border:1px solid #94a3b8;background:transparent;"
+      + "color:#94a3b8;border-radius:8px;font:13px/1.4 inherit;cursor:pointer;";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Clearing…";
+      try {
+        if ("serviceWorker" in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+        }
+        if ("caches" in window) {
+          const names = await caches.keys();
+          await Promise.all(names.map((n) => caches.delete(n)));
+        }
+        localStorage.clear();
+      } catch (_) { /* best effort */ }
+      // Hard reload, bypassing any remaining cache.
+      window.location.reload();
+    });
+    document.body.appendChild(btn);
+  });
 })();
 
 (function () {
@@ -44,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.5.5";
+  const APP_VERSION = "0.5.6";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
