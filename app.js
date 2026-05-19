@@ -134,7 +134,25 @@
     onPick: (entry) => {
       pickedEntity = entry;
       localStorage.setItem("ha_entity_id", entry.entity_id);
-      updateEntitySelectedDisplay();
+      // v0.3: auto-fill BLE filter fields from the entity's HA device
+      // record. Without this, the phone scans every advertisement in
+      // range and the local trend arrow jitters across unrelated
+      // devices. Overwriting unconditionally on each pick is the right
+      // default: the common "I edited the field" case is "I picked the
+      // wrong entity, now picking again" — wiping stale fields. Manual
+      // overrides go in AFTER the final pick.
+      const ble = entityPicker.getBleInfo(entry);
+      if (ble) {
+        bleNameEl.value = ble.suggested_name_prefix || "";
+        bleMacEl.value = ble.bluetooth_mac || "";
+        if (ble.bluetooth_mac) localStorage.setItem("ble_mac", ble.bluetooth_mac);
+      } else {
+        // No BLE info for this entity — clear fields so a previous
+        // entity's auto-fill doesn't bleed through.
+        bleNameEl.value = "";
+        bleMacEl.value = "";
+      }
+      updateEntitySelectedDisplay(ble);
     },
   });
 
@@ -144,14 +162,31 @@
     }
   });
 
-  function updateEntitySelectedDisplay() {
+  function updateEntitySelectedDisplay(bleInfo) {
     if (!pickedEntity) {
       entitySelectedEl.textContent = "";
       entitySelectedEl.style.display = "none";
       return;
     }
     const label = pickedEntity.name || pickedEntity.original_name || pickedEntity.entity_id;
-    entitySelectedEl.textContent = `Tracking: ${label} (${pickedEntity.entity_id})`;
+    let txt = `Tracking: ${label} (${pickedEntity.entity_id})`;
+    // v0.3: surface what we auto-detected so the user can tell why
+    // their filter fields got populated (and so they know to override
+    // if the device's BLE name differs from its HA display name).
+    if (bleInfo && (bleInfo.bluetooth_mac || bleInfo.suggested_name_prefix)) {
+      const parts = [];
+      if (bleInfo.suggested_name_prefix) {
+        parts.push(`name prefix “${bleInfo.suggested_name_prefix}”`);
+      }
+      if (bleInfo.bluetooth_mac) parts.push(`MAC ${bleInfo.bluetooth_mac}`);
+      txt += `\nAuto-detected: ${parts.join(", ")}`;
+    } else if (bleInfo === null && pickedEntity) {
+      // Picker reported no BLE info — common for esphome-proxy-discovered
+      // entities whose underlying device isn't in HA's BT registry.
+      txt += "\n(no Bluetooth info on file — type a name prefix manually)";
+    }
+    entitySelectedEl.textContent = txt;
+    entitySelectedEl.style.whiteSpace = "pre-line";
     entitySelectedEl.style.display = "block";
   }
 
