@@ -1,18 +1,21 @@
-// Service worker — v0.4: versioned shell cache + auto-update.
+// Service worker — v0.5.6: NETWORK-FIRST for everything.
 //
-// Strategy:
-//   - Install: precache the static shell so the PWA loads offline / fast.
-//   - Activate: claim all clients + delete old version caches so the next
-//     reload picks up the new files without manual hard-refresh.
-//   - Fetch: network-first for HTML (always fresh control flow), cache-
-//     first for JS/CSS/icons (matches what was precached).
+// History:
+//   v0.4: cache-first for JS, network-first for HTML.
+//   v0.5.2: added controllerchange auto-reload to bust stale clients.
+//   v0.5.6: network-first for ALL same-origin GETs. Cache is fallback
+//     only — used when network fetch fails (offline). This trades a
+//     tiny amount of repeat-load latency for zero stale-JS bugs.
 //
-// Bump CACHE_VERSION on every deploy that changes shipped files. The
-// `update()` call in app.js triggers the SW to recheck this script on
-// each page load — when the bytes differ, browsers install the new SW
-// and fire `activate` (where we drop the old cache).
+// Why the change: cache-first served stale JS even after deploys,
+// even on cache-bumped SW versions, because activation timing left
+// browser tabs running pre-update code. The "stale JS + fresh HTML"
+// combo presented as a blank page below the step bar with no errors.
+// Network-first sidesteps the entire class of problems — the page
+// gets fresh code every load when online, falls back to cache when
+// offline. GitHub Pages is fast; ~50-200 ms latency is acceptable.
 
-const CACHE_VERSION = "find-my-ha-v0.5.5";
+const CACHE_VERSION = "find-my-ha-v0.5.6";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
@@ -46,36 +49,25 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  // Only intercept same-origin (PWA shell). Let third-party requests
-  // (HA WebSocket goes through wss:// anyway) hit the network directly.
-  if (url.origin !== location.origin) return;
+  if (url.origin !== location.origin) return;  // HA WS etc. — pass through
 
-  const isHtml = req.mode === "navigate"
-    || (req.headers.get("accept") || "").includes("text/html");
-
-  if (isHtml) {
-    // Network-first for navigations so a deploy is visible instantly.
-    event.respondWith(
-      fetch(req)
-        .then((resp) => {
-          const copy = resp.clone();
-          caches.open(CACHE_VERSION).then((c) => c.put(req, copy));
-          return resp;
-        })
-        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html"))),
-    );
-    return;
-  }
-
-  // Cache-first for JS/CSS/icons.
-  event.respondWith(
-    caches.match(req).then((cached) => {
+  // Network-first for everything. On success, refresh cache. On
+  // failure, fall back to cache so PWA still works offline.
+  event.respondWith((async () => {
+    try {
+      const fresh = await fetch(req, { cache: "no-cache" });
+      const copy = fresh.clone();
+      caches.open(CACHE_VERSION).then((c) => c.put(req, copy));
+      return fresh;
+    } catch (_) {
+      const cached = await caches.match(req);
       if (cached) return cached;
-      return fetch(req).then((resp) => {
-        const copy = resp.clone();
-        caches.open(CACHE_VERSION).then((c) => c.put(req, copy));
-        return resp;
-      });
-    }),
-  );
+      // For navigations, fall back to cached index.html.
+      if (req.mode === "navigate") {
+        const indexHit = await caches.match("./index.html");
+        if (indexHit) return indexHit;
+      }
+      throw _;
+    }
+  })());
 });
