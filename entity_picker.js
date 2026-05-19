@@ -106,9 +106,16 @@
 
   function EntityPicker(opts) {
     const inputEl = opts.inputEl;     // <input type="text"> (search box)
-    const listEl = opts.listEl;       // <div> for results (we'll render <button>s)
+    const selectEl = opts.selectEl;   // <select> — v0.6.0: native modal picker
     const statusEl = opts.statusEl;   // <div> for "Loading entities…" etc.
     const onPick = opts.onPick;       // (entry) => void
+
+    // v0.6.0: legacy `listEl` alias for any external caller still
+    // passing the old div-based picker. Drop the alias once the PWA
+    // is fully on the native-select path.
+    if (!selectEl && opts.listEl && opts.listEl.tagName === "SELECT") {
+      opts.selectEl = opts.listEl;
+    }
 
     let allEntities = [];      // full registry list (filtered to BLE OR identifiable)
     let filtered = [];
@@ -142,41 +149,52 @@
       statusEl.className = "hint" + (isError ? " error" : "");
     }
 
+    // v0.6.0: render into a native <select>. On mobile this opens
+    // as the OS native picker (Android full-screen list with search,
+    // iOS wheel). On desktop it's the standard dropdown. Mirrors the
+    // area picker pattern used on Tab 3.
     function render() {
-      listEl.innerHTML = "";
-      if (!filtered.length) {
-        const empty = document.createElement("div");
-        empty.className = "hint";
-        empty.textContent = allEntities.length
-          ? "No BLE-trackable entities match your search."
-          : "Connect to HA to load entities.";
-        listEl.appendChild(empty);
-        return;
-      }
-      const shown = filtered.slice(0, 50); // cap for performance
+      if (!selectEl) return;
+      // Preserve current value across rebuilds when the user is
+      // mid-search; otherwise the option flicker forces a re-pick.
+      const currentValue = selected?.entity_id || "";
+      // Clear + add placeholder.
+      selectEl.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = filtered.length
+        ? `— pick a device (${filtered.length}) —`
+        : allEntities.length
+          ? "— no matches; clear search —"
+          : "— connect to HA first —";
+      selectEl.appendChild(placeholder);
+      // Cap rendered options so a 3000-entity install doesn't drop a
+      // huge DOM tree under iOS's wheel picker. 200 covers any
+      // realistic post-filter set.
+      const RENDER_CAP = 200;
+      const shown = filtered.slice(0, RENDER_CAP);
       shown.forEach((entry) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "entity-row" + (selected?.entity_id === entry.entity_id ? " selected" : "");
-        const label = entry.name || entry.original_name || entry.entity_id;
-        btn.innerHTML =
-          '<div class="entity-name"></div>' +
-          '<div class="entity-id"></div>';
-        btn.querySelector(".entity-name").textContent = label;
-        btn.querySelector(".entity-id").textContent = entry.entity_id;
-        btn.addEventListener("click", () => {
-          selected = entry;
-          render();
-          if (onPick) onPick(entry);
-        });
-        listEl.appendChild(btn);
+        const opt = document.createElement("option");
+        opt.value = entry.entity_id;
+        const friendly = entry.name || entry.original_name || entry.entity_id;
+        // Native pickers show option.textContent as one line. Compose
+        // friendly + entity_id with a separator so both are visible.
+        opt.textContent =
+          friendly === entry.entity_id
+            ? entry.entity_id
+            : `${friendly}  ·  ${entry.entity_id}`;
+        if (entry.entity_id === currentValue) opt.selected = true;
+        selectEl.appendChild(opt);
       });
-      if (filtered.length > shown.length) {
-        const more = document.createElement("div");
-        more.className = "hint";
-        more.textContent = `…and ${filtered.length - shown.length} more — refine search to narrow.`;
-        listEl.appendChild(more);
+      if (filtered.length > RENDER_CAP) {
+        const more = document.createElement("option");
+        more.value = "";
+        more.disabled = true;
+        more.textContent =
+          `…and ${filtered.length - RENDER_CAP} more — refine search to narrow`;
+        selectEl.appendChild(more);
       }
+      selectEl.disabled = !allEntities.length;
     }
 
     function applyFilter() {
@@ -198,6 +216,19 @@
     }
 
     inputEl.addEventListener("input", applyFilter);
+
+    // v0.6.0: native select change → pick.
+    if (selectEl) {
+      selectEl.addEventListener("change", () => {
+        const v = selectEl.value;
+        if (!v) return;
+        const entry = allEntities.find((e) => e.entity_id === v);
+        if (entry) {
+          selected = entry;
+          if (onPick) onPick(entry);
+        }
+      });
+    }
 
     // Public API.
     return {

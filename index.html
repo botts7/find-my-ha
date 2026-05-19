@@ -290,37 +290,38 @@
     }
     .reconnect-row button.small { margin: 0; }
 
-    /* Entity picker */
-    .entity-list {
-      max-height: 220px; overflow-y: auto;
+    /* Entity picker — v0.6.0: native <select> for OS-native modal UX
+       (matches the area picker on Tab 3). Mobile users get the
+       full-screen Android picker / iOS wheel instead of an inline
+       scrollable list. */
+    .entity-select {
+      display: block;
+      width: 100%;
+      padding: 12px 14px;
       margin-top: 8px;
       border: 1px solid var(--border);
       border-radius: 8px;
-    }
-    .entity-list:empty { display: none; }
-    .entity-row {
-      display: block;
-      width: 100%;
-      text-align: left;
-      padding: 10px 12px;
-      margin: 0;
-      background: transparent;
+      background: var(--card);
       color: var(--fg);
-      border: none;
-      border-bottom: 1px solid var(--border);
-      border-radius: 0;
       font: inherit;
-      font-weight: normal;
+      font-size: 1em;
       cursor: pointer;
+      /* Reset iOS quirks: native chevron + sane padding for the wheel. */
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 12px) calc(50% - 2px);
+      background-size: 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 36px;
     }
-    .entity-row:last-child { border-bottom: none; }
-    .entity-row:hover { background: rgba(37, 99, 235, 0.1); }
-    .entity-row.selected {
-      background: rgba(37, 99, 235, 0.2);
-      border-left: 3px solid var(--accent);
-    }
-    .entity-name { font-weight: 600; }
-    .entity-id { font-size: 0.8em; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 2px; }
+    .entity-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .entity-select:disabled { opacity: 0.5; cursor: not-allowed; }
     .entity-selected {
       margin-top: 10px;
       padding: 8px 10px;
@@ -454,7 +455,9 @@
       AirTag, BTHome, BLE locks).
     </div>
     <input type="search" id="entity-search" placeholder="Search BLE-trackable entities…" />
-    <div id="entity-list" class="entity-list"></div>
+    <select id="entity-select" class="entity-select" disabled>
+      <option value="">— pick a device —</option>
+    </select>
     <div id="entity-status" class="hint" style="display: none;"></div>
     <div id="entity-selected" class="entity-selected" style="display: none;"></div>
     <div class="hint" id="entity-list-hint">
