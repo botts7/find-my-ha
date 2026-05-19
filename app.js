@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.5.7";
+  const APP_VERSION = "0.5.8";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -149,12 +149,16 @@
   const identifyTargetEl = $("identify-target");
   const identifyStateEl = $("identify-state");
   const flashBtn = $("flash-btn");
+  const flashStopBtn = $("flash-stop-btn");
+  const flashModeEl = $("flash-mode");
   const identifyErrorEl = $("identify-error");
   const identifyConfirmedEl = $("identify-confirmed");
   const areaSelectEl = $("area-select");
   const confirmAreaBtn = $("confirm-area-btn");
+  const entityListHintEl = $("entity-list-hint");
   // v0.5.1: explicit Continue button instead of auto-advance 2→3.
   const continueToScanBtn = $("continue-to-scan-btn");
+  const continueBar = $("continue-bar");
   continueToScanBtn.addEventListener("click", () => switchTab(3));
 
   // ----- Theme override ---------------------------------------------------
@@ -344,6 +348,18 @@
         + "non-BLE devices."
       : "<strong>BLE find</strong>: warmer/colder for BLE-trackable devices (Hue, "
         + "AirTag, BTHome, BLE locks).";
+    // v0.5.8: mode-aware search placeholder + hint.
+    if (entitySearchEl) {
+      entitySearchEl.placeholder = mode === "identify"
+        ? "Search lights / switches / fans / scenes…"
+        : "Search BLE-trackable entities…";
+    }
+    if (entityListHintEl) {
+      entityListHintEl.innerHTML = mode === "identify"
+        ? "Lists all controllable entities. Connect first to populate."
+        : "Lists <code>device_tracker</code> and BLE-hinted "
+          + "<code>binary_sensor</code> entities. Connect first to populate.";
+    }
   }
   applyModeButtons();
 
@@ -405,11 +421,15 @@
       service_data: { entity_id: eid },
     });
     // For lights/switches/fans, two toggles produces a visible blink
-    // while restoring original state.
+    // while restoring original state. v0.5.8: 600 ms wasn't enough for
+    // Zigbee/Z-Wave round-trips on real installs — the second toggle
+    // sometimes fired before the first reached the device, end-state
+    // unchanged, user reported "takes two tries". 1500 ms covers the
+    // 99th-percentile mesh latency without slowing the UX noticeably.
     if (domain === "light" || domain === "switch" || domain === "fan"
         || domain === "input_boolean") {
       await toggleCall("toggle");
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise((r) => setTimeout(r, 1500));
       await toggleCall("toggle");
       return;
     }
@@ -589,12 +609,15 @@
     const hasEntity = !!pickedEntity;
     const scanning = streamer.isActive();
 
-    // v0.5.1: show Continue → button at bottom of Tab 2 once entity is
-    // picked, so the user has an obvious path forward without us
-    // hijacking the tab.
+    // v0.5.8: sticky Continue bar at the bottom of the viewport when
+    // on Tab 2 with an entity picked. Body gets padding-bottom so the
+    // last entity row isn't hidden under the bar.
+    const showContinueBar = connected && hasEntity && activeTab === 2;
+    if (continueBar) {
+      continueBar.style.display = showContinueBar ? "block" : "none";
+      document.body.classList.toggle("with-continue-bar", showContinueBar);
+    }
     if (continueToScanBtn) {
-      continueToScanBtn.style.display =
-        (connected && hasEntity && activeTab === 2) ? "block" : "none";
       continueToScanBtn.textContent = mode === "identify"
         ? "Continue to identify →"
         : "Continue to scan →";
@@ -1038,6 +1061,28 @@
   }
 
   // ----- Identify mode handlers (v0.5) -----------------------------------
+  // v0.5.8: Flash modes — single blink or repeat-until-stop loop.
+  // SAFE interval = 2500 ms. Vendor reset/pairing thresholds we
+  // explicitly avoid (from memory `identify_vendor_pairing_thresholds`):
+  //   Tuya 3×/10s, Aqara 5×/5s, Hue 5×/10s, IKEA 6×/10s, Sengled 10×,
+  //   LIFX 5×/5s, Shelly 5×/30s. At 1 toggle per 2.5s, no pattern
+  //   reaches any vendor's reset count within their window.
+  // Hard auto-stop after 60s as belt-and-braces.
+  const FLASH_INTERVAL_MS = 2500;
+  const FLASH_LOOP_MAX_MS = 60000;
+  let flashLoopTimer = null;
+  let flashLoopStartedAt = 0;
+
+  function stopFlashLoop() {
+    if (flashLoopTimer) {
+      clearInterval(flashLoopTimer);
+      flashLoopTimer = null;
+    }
+    flashStopBtn.style.display = "none";
+    flashBtn.disabled = false;
+    flashBtn.textContent = "🔆 Flash this entity";
+  }
+
   flashBtn.addEventListener("click", async () => {
     identifyErrorEl.style.display = "none";
     if (!pickedEntity) {
@@ -1045,6 +1090,35 @@
       identifyErrorEl.style.display = "block";
       return;
     }
+    const flashMode = flashModeEl.value || "single";
+    if (flashMode === "loop") {
+      // Repeat until user stops or 60s elapses.
+      stopFlashLoop();  // clear any previous loop
+      flashBtn.disabled = true;
+      flashBtn.textContent = "🔆 Flashing…";
+      flashStopBtn.style.display = "block";
+      flashLoopStartedAt = Date.now();
+      // Fire immediately, then on interval.
+      const tick = async () => {
+        if (Date.now() - flashLoopStartedAt > FLASH_LOOP_MAX_MS) {
+          stopFlashLoop();
+          return;
+        }
+        try {
+          await flashEntity(pickedEntity);
+          if (typeof navigator.vibrate === "function") navigator.vibrate(20);
+        } catch (e) {
+          const msg = e?.error?.message ?? e?.message ?? String(e);
+          identifyErrorEl.textContent = "Flash failed: " + msg;
+          identifyErrorEl.style.display = "block";
+          stopFlashLoop();
+        }
+      };
+      tick();
+      flashLoopTimer = setInterval(tick, FLASH_INTERVAL_MS);
+      return;
+    }
+    // Single-blink mode.
     flashBtn.disabled = true;
     flashBtn.textContent = "🔆 Flashing…";
     try {
@@ -1059,6 +1133,10 @@
     } finally {
       flashBtn.disabled = false;
     }
+  });
+
+  flashStopBtn.addEventListener("click", () => {
+    stopFlashLoop();
   });
 
   confirmAreaBtn.addEventListener("click", async () => {
