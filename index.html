@@ -20,6 +20,8 @@
       --cold: #6b7280;
       --card: #1e293b;
       --border: #334155;
+      --ok: #22c55e;
+      --pending: #eab308;
     }
     @media (prefers-color-scheme: light) {
       :root {
@@ -47,8 +49,13 @@
       padding: 16px;
       margin-bottom: 12px;
     }
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-bottom: 8px;
+    }
+    .section-head h2 { margin: 0; font-size: 1em; font-weight: 600; }
     label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.85em; }
-    input[type="text"], input[type="password"], select {
+    input[type="text"], input[type="password"], input[type="search"], select {
       width: 100%; padding: 10px 12px; border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--bg); color: var(--fg);
@@ -62,6 +69,10 @@
       cursor: pointer;
     }
     button.secondary { background: var(--border); color: var(--fg); }
+    button.small {
+      width: auto; padding: 6px 12px; margin: 0;
+      font-size: 0.85em; font-weight: 500;
+    }
     button:disabled { opacity: 0.4; cursor: not-allowed; }
     .rssi-display {
       text-align: center; padding: 24px 0;
@@ -94,11 +105,81 @@
       font-size: 0.85em; color: var(--muted);
       margin-top: 12px;
     }
+    .hint.error {
+      color: var(--hot);
+      background: rgba(239, 68, 68, 0.08);
+      padding: 8px 10px;
+      border-radius: 6px;
+    }
     code {
       background: var(--bg); padding: 2px 6px;
       border-radius: 4px; font-size: 0.88em;
       font-family: ui-monospace, SFMono-Regular, monospace;
     }
+
+    /* Connection-state pill */
+    .conn-pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75em;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .conn-disconnected { color: var(--muted); }
+    .conn-connecting   { color: var(--pending); border-color: var(--pending); }
+    .conn-authed       { color: var(--ok); border-color: var(--ok); }
+    .conn-streaming    {
+      color: white; background: var(--ok); border-color: var(--ok);
+    }
+    .conn-error        { color: var(--hot); border-color: var(--hot); }
+
+    /* Entity picker */
+    .entity-list {
+      max-height: 220px; overflow-y: auto;
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .entity-list:empty { display: none; }
+    .entity-row {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 10px 12px;
+      margin: 0;
+      background: transparent;
+      color: var(--fg);
+      border: none;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      font: inherit;
+      font-weight: normal;
+      cursor: pointer;
+    }
+    .entity-row:last-child { border-bottom: none; }
+    .entity-row:hover { background: rgba(37, 99, 235, 0.1); }
+    .entity-row.selected {
+      background: rgba(37, 99, 235, 0.2);
+      border-left: 3px solid var(--accent);
+    }
+    .entity-name { font-weight: 600; }
+    .entity-id { font-size: 0.8em; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 2px; }
+    .entity-selected {
+      margin-top: 10px;
+      padding: 8px 10px;
+      background: rgba(34, 197, 94, 0.1);
+      border-left: 3px solid var(--ok);
+      border-radius: 6px;
+      font-size: 0.88em;
+    }
+    .row-flex {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .row-flex > input { flex: 1; }
   </style>
 </head>
 <body>
@@ -106,25 +187,50 @@
   <div class="sub">Walk around with your phone — the trend arrow tells you which way the device is.</div>
 
   <section id="setup-section">
-    <label for="ha-url">Home Assistant URL</label>
+    <div class="section-head">
+      <h2>Home Assistant</h2>
+      <span id="conn-state" class="conn-pill conn-disconnected">disconnected</span>
+    </div>
+    <label for="ha-url">URL</label>
     <input type="text" id="ha-url" placeholder="https://homeassistant.local:8123" autocomplete="url" />
     <label for="ha-token" style="margin-top: 12px;">Long-lived access token</label>
     <input type="password" id="ha-token" placeholder="paste from Profile → Security" />
+    <div id="conn-detail" class="error" style="display: none;"></div>
     <button id="save-creds-btn" class="secondary">Save credentials (local only)</button>
+    <button id="connect-btn">Connect to Home Assistant</button>
+    <button id="disconnect-btn" class="secondary" style="display: none;">Disconnect</button>
     <div class="hint">
       Stored in your phone's localStorage. Nothing is transmitted off-device
       except to your HA instance.
     </div>
   </section>
 
+  <section id="entity-section">
+    <div class="section-head">
+      <h2>Target entity</h2>
+      <button id="refresh-entities-btn" class="secondary small">Refresh</button>
+    </div>
+    <input type="search" id="entity-search" placeholder="Search BLE-trackable entities…" />
+    <div id="entity-list" class="entity-list"></div>
+    <div id="entity-status" class="hint" style="display: none;"></div>
+    <div id="entity-selected" class="entity-selected" style="display: none;"></div>
+    <div class="hint">
+      Lists <code>device_tracker</code> and BLE-hinted <code>binary_sensor</code>
+      entities from your HA entity registry. Connect first to populate.
+    </div>
+  </section>
+
   <section id="scan-section">
-    <label for="ble-name">Target BLE name or address (optional)</label>
-    <input type="text" id="ble-name" placeholder="e.g. Hue White E27 or AA:BB:CC:DD:EE:FF" />
+    <label for="ble-name">BLE name prefix filter (optional)</label>
+    <input type="text" id="ble-name" placeholder="e.g. Hue White" />
+    <label for="ble-mac" style="margin-top: 12px;">BLE MAC (optional, sent to HA for cross-ref)</label>
+    <input type="text" id="ble-mac" placeholder="AA:BB:CC:DD:EE:FF" />
     <button id="scan-btn">📡 Start scan</button>
     <div id="scan-error" class="error" style="display: none;"></div>
     <div class="hint">
       Web Bluetooth requires Chrome on Android (iOS Safari doesn't expose
       the API). On first scan you'll be prompted for Bluetooth permission.
+      Streaming kicks in only when you've connected to HA and picked an entity.
     </div>
   </section>
 
@@ -135,9 +241,13 @@
       <div class="rssi-trend" id="rssi-trend">·</div>
       <div class="meta" id="rssi-meta"></div>
     </div>
+    <div id="stream-state" class="hint" style="display: none;"></div>
     <button id="stop-btn" class="secondary">Stop scan</button>
   </section>
 
+  <script src="ws_client.js"></script>
+  <script src="entity_picker.js"></script>
+  <script src="streamer.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

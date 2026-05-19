@@ -28,10 +28,14 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **MVP skeleton.** Use cases:
-- Manual entry of target Bluetooth address → live RSSI display
-- HA URL + token pairing
-- Forward RSSI to HA Insights' `home_insights/companion_scan_stream` WS endpoint *(planned — currently writes to local log only)*
+🚧 **v0.2 — WebSocket streaming.** Use cases:
+- Manual entry of target Bluetooth name/address → live RSSI display (local-only mode still supported)
+- HA URL + token pairing with persistent connection
+- Connection-state indicator (disconnected / connecting / authed / streaming / error)
+- Auto-reconnect with exponential backoff (2 → 4 → 8 → 16 → 30 s)
+- Searchable HA entity picker (loaded from `config/entity_registry/list`)
+- Live RSSI streaming to HA Insights via `home_insights/companion_scan_*` messages, server-rate-limited (default 4 Hz)
+- Graceful teardown on stop / disconnect
 
 ## Quick start (early-access)
 
@@ -56,11 +60,31 @@ iOS users: install the HA Companion app — once the Companion feature request (
 
 ## Roadmap
 
-- **v0.1** (this commit): single-page skeleton, manual BLE address, local log only
-- **v0.2**: HA pairing + WS connection, configurable entity picker
+- **v0.1**: single-page skeleton, manual BLE address, local log only — *shipped*
+- **v0.2** (this commit): HA pairing + WS connection, entity picker, live RSSI streaming
 - **v0.3**: HA Insights server-side handler accepting `companion_scan_stream` subscription; card-side "Use phone scanner" toggle
 - **v0.4**: Flutter native port (iOS + background scan)
 - **v0.5**: Upstream proposal to Companion app team
+
+## Module layout (v0.2)
+
+```
+index.html         — UI shell + section markup
+app.js             — controller: wires DOM → ws_client/entity_picker/streamer
+ws_client.js       — HA WebSocket: auth, request/response correlation, reconnect
+entity_picker.js   — searchable BLE-trackable entity dropdown
+streamer.js        — subscribe / rate-limited sample emit / unsubscribe
+docs/WS_PROTOCOL.md — shared contract with the ha-insights integration
+```
+
+## Verification (v0.2)
+
+1. Save HA URL + long-lived token, tap **Connect**. State pill goes `connecting…` → `connected`.
+2. Entity picker populates with BLE-trackable entities. Pick one — green confirmation appears.
+3. Tap **Start scan**, grant the BLE permission. State pill flips to `streaming`; the stream-state hint reads "streaming to HA ✓".
+4. Server-side log line (in ha-insights) shows the inbound `companion_scan_sample` messages at ≤ `max_sample_rate_hz`.
+5. Tap **Stop scan** → unsubscribe is sent, pill returns to `connected`.
+6. Pull the HA URL out of reach (airplane mode) → pill flips to `connecting…` and retries with backoff; restoring connectivity resumes within ≤30 s.
 
 ## Status pages
 
