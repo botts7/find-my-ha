@@ -1,25 +1,51 @@
-// Find My HA Device — MVP scanner
-// Phase 1: local BLE scan + RSSI display. HA WebSocket streaming
-// lands in Phase 2 once we've validated the scanner half works.
+// Find My HA Device — main wiring.
+//
+// v0.1: local BLE scan + RSSI display.
+// v0.2: HA WebSocket pairing + entity picker + live RSSI streaming.
+//
+// This file is the controller: it owns DOM refs and orchestrates the
+// scanner ↔ WS client ↔ streamer modules. The actual logic is in
+// ws_client.js / entity_picker.js / streamer.js.
+//
+// Local-only mode still works — users can run a scan without connecting
+// to HA at all. Streaming kicks in only when (scanning ∧ authed ∧ entity-picked).
 //
 // Web Bluetooth API constraints:
-//   - Only available in Chrome/Edge on Android (Apple's WebKit doesn't
-//     expose it on iOS)
-//   - requestLEScan() is behind a flag in Chrome stable; the user has
-//     to enable chrome://flags/#enable-experimental-web-platform-features
-//     OR we use requestDevice() as a fallback (one-shot but well-supported)
-//   - Background scanning is not permitted from a tab. PWA installed as
-//     a standalone app + the "Bluetooth" permission policy is the closest
-//     thing to background scanning available today.
+//   - Only available in Chrome/Edge on Android
+//   - requestLEScan() is behind chrome://flags/#enable-experimental-web-platform-features
+//   - Background scanning from a tab is not permitted; standalone-installed
+//     PWA + the user keeping the screen on is the closest we get today
 
 (function () {
   "use strict";
 
+  // ----- DEBUG flag -------------------------------------------------------
+  // Local logging of RSSI samples is useful during development but the spec
+  // says we must NOT log streamed samples in production. Flip this off
+  // before deploying.
+  const DEBUG = false;
+  function dlog() {
+    if (DEBUG) console.log.apply(console, arguments);
+  }
+
+  // ----- DOM refs ---------------------------------------------------------
   const $ = (id) => document.getElementById(id);
   const haUrlEl = $("ha-url");
   const haTokenEl = $("ha-token");
   const saveBtn = $("save-creds-btn");
+  const connectBtn = $("connect-btn");
+  const disconnectBtn = $("disconnect-btn");
+  const connStateEl = $("conn-state");
+  const connDetailEl = $("conn-detail");
+
+  const entitySearchEl = $("entity-search");
+  const entityListEl = $("entity-list");
+  const entityStatusEl = $("entity-status");
+  const entitySelectedEl = $("entity-selected");
+  const refreshEntitiesBtn = $("refresh-entities-btn");
+
   const bleNameEl = $("ble-name");
+  const bleMacEl = $("ble-mac");
   const scanBtn = $("scan-btn");
   const stopBtn = $("stop-btn");
   const rssiSection = $("rssi-section");
@@ -27,11 +53,13 @@
   const rssiBucket = $("rssi-bucket");
   const rssiTrend = $("rssi-trend");
   const rssiMeta = $("rssi-meta");
+  const streamStateEl = $("stream-state");
   const scanError = $("scan-error");
 
-  // Restore saved creds on load.
+  // ----- Restore saved creds ---------------------------------------------
   haUrlEl.value = localStorage.getItem("ha_url") ?? "";
   haTokenEl.value = localStorage.getItem("ha_token") ?? "";
+  bleMacEl.value = localStorage.getItem("ble_mac") ?? "";
 
   saveBtn.addEventListener("click", () => {
     localStorage.setItem("ha_url", haUrlEl.value.trim());
@@ -40,9 +68,110 @@
     setTimeout(() => (saveBtn.textContent = "Save credentials (local only)"), 1500);
   });
 
-  // Trend buffer: keep last N RSSI smoothed values; compare recent vs older
-  // half to derive direction arrow. EMA smoothing avoids per-advertisement
-  // jitter dominating the verdict.
+  // ----- WS client setup --------------------------------------------------
+  const ws = new HaWsClient();
+  let pickedEntity = null;
+
+  const CONN_LABELS = {
+    disconnected: { text: "disconnected", cls: "conn-disconnected" },
+    connecting:   { text: "connecting…", cls: "conn-connecting" },
+    authenticating: { text: "authenticating…", cls: "conn-connecting" },
+    authed:       { text: "connected", cls: "conn-authed" },
+    streaming:    { text: "streaming", cls: "conn-streaming" },
+    error:        { text: "error", cls: "conn-error" },
+  };
+
+  ws.onStateChange(({ state, error }) => {
+    const label = CONN_LABELS[state] ?? CONN_LABELS.disconnected;
+    connStateEl.textContent = label.text;
+    connStateEl.className = "conn-pill " + label.cls;
+    connDetailEl.textContent = error ?? "";
+    connDetailEl.style.display = error ? "block" : "none";
+
+    // Show/hide disconnect button.
+    const live = state !== "disconnected" && state !== "error";
+    connectBtn.style.display = live ? "none" : "block";
+    disconnectBtn.style.display = live ? "block" : "none";
+
+    // Load entities on first successful auth.
+    if (state === "authed") {
+      entityPicker.load(ws);
+    }
+    if (state === "disconnected" || state === "error") {
+      // Stop streaming if it was running; the WS layer already discarded the
+      // subscription on close.
+      if (streamer.isActive()) {
+        streamer.stop().catch(() => { /* ignore */ });
+      }
+    }
+  });
+
+  connectBtn.addEventListener("click", () => {
+    const url = haUrlEl.value.trim();
+    const token = haTokenEl.value.trim();
+    if (!url || !token) {
+      connDetailEl.textContent = "Enter HA URL and token first.";
+      connDetailEl.style.display = "block";
+      return;
+    }
+    localStorage.setItem("ha_url", url);
+    localStorage.setItem("ha_token", token);
+    ws.connect(url, token);
+  });
+
+  disconnectBtn.addEventListener("click", () => {
+    ws.disconnect();
+    entityPicker.clear();
+    pickedEntity = null;
+    updateEntitySelectedDisplay();
+  });
+
+  // ----- Entity picker ----------------------------------------------------
+  const entityPicker = new EntityPicker({
+    inputEl: entitySearchEl,
+    listEl: entityListEl,
+    statusEl: entityStatusEl,
+    onPick: (entry) => {
+      pickedEntity = entry;
+      localStorage.setItem("ha_entity_id", entry.entity_id);
+      updateEntitySelectedDisplay();
+    },
+  });
+
+  refreshEntitiesBtn.addEventListener("click", () => {
+    if (ws.getState() === "authed" || ws.getState() === "streaming") {
+      entityPicker.load(ws);
+    }
+  });
+
+  function updateEntitySelectedDisplay() {
+    if (!pickedEntity) {
+      entitySelectedEl.textContent = "";
+      entitySelectedEl.style.display = "none";
+      return;
+    }
+    const label = pickedEntity.name || pickedEntity.original_name || pickedEntity.entity_id;
+    entitySelectedEl.textContent = `Tracking: ${label} (${pickedEntity.entity_id})`;
+    entitySelectedEl.style.display = "block";
+  }
+
+  // ----- Streamer ---------------------------------------------------------
+  const streamer = new Streamer({
+    wsClient: ws,
+    onStateChange: (s) => {
+      const labels = {
+        idle: "",
+        subscribing: "subscribing to HA…",
+        streaming: "streaming to HA ✓",
+        error: "stream error — check connection",
+      };
+      streamStateEl.textContent = labels[s] ?? "";
+      streamStateEl.style.display = labels[s] ? "block" : "none";
+      streamStateEl.className = "hint" + (s === "error" ? " error" : "");
+    },
+  });
+
+  // ----- RSSI display state (local — unchanged from v0.1) -----------------
   const trendBuffer = [];
   const TREND_WINDOW = 8;
   const EMA_ALPHA = 0.4;
@@ -105,24 +234,17 @@
     rssiMeta.textContent = deviceName ? `device: ${deviceName}` : "";
   }
 
-  // Active scanning state.
-  let currentScan = null;          // BluetoothLEScan handle
-  let scanAbortController = null;  // for event listener teardown
+  // ----- Active BLE scan --------------------------------------------------
+  let currentScan = null;
+  let scanAbortController = null;
 
   scanBtn.addEventListener("click", async () => {
     clearError();
     if (!navigator.bluetooth) {
-      showError(
-        "Web Bluetooth not supported. Use Chrome or Edge on Android.",
-      );
+      showError("Web Bluetooth not supported. Use Chrome or Edge on Android.");
       return;
     }
     if (!navigator.bluetooth.requestLEScan) {
-      // Fallback: requestDevice() works but is one-shot and shows a
-      // picker dialog rather than a continuous stream. Chrome stable
-      // hides requestLEScan() behind chrome://flags/#enable-experimental-
-      // web-platform-features. Surface a clear message before falling
-      // back.
       showError(
         "Active LE scan not available in this browser. Enable the flag "
         + "chrome://flags/#enable-experimental-web-platform-features, "
@@ -131,15 +253,15 @@
       return;
     }
 
+    // Persist optional BLE MAC hint for cross-reference with HA's proxies.
+    localStorage.setItem("ble_mac", bleMacEl.value.trim());
+
     try {
       rssiSection.style.display = "block";
       trendBuffer.length = 0;
       smoothedRssi = null;
       updateRssiDisplay(null);
 
-      // Filter by name if user provided one, otherwise accept all
-      // advertisements. acceptAllAdvertisements is required when no
-      // filter is set — Chrome will reject otherwise.
       const targetName = bleNameEl.value.trim().toLowerCase();
       const scanOpts = targetName
         ? { filters: [{ namePrefix: bleNameEl.value.trim() }] }
@@ -156,6 +278,23 @@
 
       scanBtn.disabled = true;
       saveBtn.disabled = true;
+
+      // Kick off the HA stream if we have everything.
+      if ((ws.getState() === "authed" || ws.getState() === "streaming") && pickedEntity) {
+        const mac = bleMacEl.value.trim() || null;
+        try {
+          await streamer.start(pickedEntity.entity_id, mac);
+        } catch (e) {
+          // Streamer state already reflects error — surface the message inline.
+          showError("HA stream subscribe failed: " + (e.message ?? e));
+        }
+      } else if (!pickedEntity) {
+        // Local-only scan; that's a supported mode per spec.
+        // Don't error, just hint.
+        streamStateEl.textContent = "Local only — pick an HA entity to stream.";
+        streamStateEl.style.display = "block";
+        streamStateEl.className = "hint";
+      }
     } catch (err) {
       showError(`Scan failed: ${err.message ?? err}`);
       stopScanInternal();
@@ -167,17 +306,20 @@
   });
 
   function handleAdvertisement(event) {
-    // event.device.name, event.rssi, event.uuids, event.manufacturerData…
-    // For Phase 1 we just display the LATEST observed RSSI. Phase 2
-    // will forward to HA WebSocket.
     const rssi = event.rssi;
     const name = event.device?.name ?? null;
     const targetName = bleNameEl.value.trim().toLowerCase();
     if (targetName && (!name || !name.toLowerCase().includes(targetName))) {
       return; // not our target
     }
+    // Local display uses smoothed value (better UX for the trend arrow).
     pushRssi(rssi);
     updateRssiDisplay(smoothedRssi, name);
+    // Server gets raw — it does its own smoothing.
+    if (streamer.isActive()) {
+      streamer.pushSample(rssi, name);
+      dlog("rssi", rssi, name); // DEBUG-gated; off by default
+    }
   }
 
   function stopScanInternal() {
@@ -189,14 +331,25 @@
       scanAbortController.abort();
       scanAbortController = null;
     }
+    if (streamer.isActive()) {
+      streamer.stop().catch(() => { /* ignore */ });
+    }
     scanBtn.disabled = false;
     saveBtn.disabled = false;
   }
 
-  // Register service worker if available — enables installable PWA.
+  // ----- Service worker (PWA install path) --------------------------------
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => { /* ok */ });
     });
+  }
+
+  // ----- Auto-connect if creds already saved ------------------------------
+  // Convenience: if the user has used the app before, attempt connection on
+  // load. Reconnect logic in ws_client.js handles HA being offline; the
+  // state pill will sit at "connecting…" / "error" without further action.
+  if (haUrlEl.value && haTokenEl.value) {
+    ws.connect(haUrlEl.value, haTokenEl.value);
   }
 })();
