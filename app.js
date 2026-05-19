@@ -1016,13 +1016,23 @@
     }
   });
 
-  // ----- Service worker — v0.4 versioned with cache busting --------------
+  // ----- Service worker — v0.5.2 auto-reload on new SW takeover ----------
+  // Without this, a deploy lands a new SW + cache + HTML, the SW takes
+  // over via clients.claim(), but the running page is STILL executing
+  // the JS it loaded before — so user sees freshly-rendered HTML
+  // wired to stale JS (e.g. new .tab-panel divs that no JS listener
+  // ever activates → blank page below the step bar). Listening for
+  // controllerchange catches the moment the new SW takes over and
+  // forces a single reload to pull the fresh JS.
   if ("serviceWorker" in navigator) {
+    let didReload = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (didReload) return;  // avoid reload loop
+      didReload = true;
+      window.location.reload();
+    });
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").then((reg) => {
-        // Force update check whenever the page loads. The SW itself
-        // claims clients on activate so a new version takes effect on
-        // the next reload without manual cache clear.
         reg.update().catch(() => { /* ignore */ });
       }).catch(() => { /* ok */ });
     });
