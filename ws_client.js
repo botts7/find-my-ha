@@ -75,8 +75,19 @@
 
     function onStateChange(cb) {
       listeners.add(cb);
-      // Fire current state synchronously so subscribers don't miss it.
-      try { cb({ state, error: lastError }); } catch (_) { /* ignore */ }
+      // v0.5.3: defer initial fire to a microtask. Subscribers
+      // registered during their host's IIFE init can reference `let`-
+      // declared symbols below the registration point — firing
+      // synchronously here would hit a temporal-dead-zone
+      // ReferenceError and crash the entire IIFE. Microtask runs after
+      // current sync frame, by which point all declarations are
+      // initialised. Net effect on real-world use is identical:
+      // subscribers still get the initial state before any user
+      // interaction.
+      Promise.resolve().then(() => {
+        if (!listeners.has(cb)) return;  // unsubscribed during the gap
+        try { cb({ state, error: lastError }); } catch (_) { /* ignore */ }
+      });
       return () => listeners.delete(cb);
     }
 
