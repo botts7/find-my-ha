@@ -25,8 +25,7 @@
   const retryNowBtn = $("retry-now-btn");
 
   const stepsEl = $("steps");
-  const setupSection = $("setup-section");
-  const entitySection = $("entity-section");
+  const tabPanels = document.querySelectorAll(".tab-panel");
   const scanSection = $("scan-section");
   const rssiSection = $("rssi-section");
 
@@ -187,6 +186,7 @@
       // user disconnect.
     }
     updateStepIndicator();
+    maybeAutoAdvance();
   });
 
   connectBtn.addEventListener("click", () => {
@@ -222,7 +222,7 @@
     entityPicker.clear();
     pickedEntity = null;
     updateEntitySelectedDisplay(null);
-    updateStepIndicator();
+    switchTab(1);  // disconnected → kick back to Setup tab
   });
 
   // ----- Entity picker ----------------------------------------------------
@@ -244,6 +244,7 @@
       }
       updateEntitySelectedDisplay(ble);
       updateStepIndicator();
+      maybeAutoAdvance();
     },
   });
   refreshEntitiesBtn.addEventListener("click", () => {
@@ -272,32 +273,68 @@
     entitySelectedEl.style.display = "block";
   }
 
-  // ----- Step indicator ---------------------------------------------------
-  // 1 = need to connect, 2 = need to pick entity, 3 = ready to scan
+  // ----- Tab navigation ---------------------------------------------------
+  // Steps double as tabs. Only one .tab-panel is visible at a time. Tabs
+  // beyond current prereqs are disabled (can't jump to Scan without
+  // connecting + picking a device first).
+  let activeTab = 1;
+  function switchTab(n) {
+    activeTab = n;
+    tabPanels.forEach((p) => {
+      p.classList.toggle("active", Number(p.dataset.panel) === n);
+    });
+    updateStepIndicator();
+    // Auto-scroll to top so the user sees the new panel from the start.
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // 1 = Setup tab reachable always; 2 reachable when connected; 3 when
+  // connected AND entity picked.
+  function reachable(n) {
+    const state = ws.getState();
+    const connected = state === "authed" || state === "streaming";
+    if (n === 1) return true;
+    if (n === 2) return connected;
+    if (n === 3) return connected && !!pickedEntity;
+    return false;
+  }
+
   function updateStepIndicator() {
     const state = ws.getState();
     const connected = state === "authed" || state === "streaming";
     const hasEntity = !!pickedEntity;
     const scanning = streamer.isActive();
 
-    // Section visibility
-    entitySection.classList.toggle("collapsed", !connected);
-    scanSection.classList.toggle("collapsed", !(connected && hasEntity));
+    stepsEl.querySelectorAll(".step").forEach((s) => {
+      const n = Number(s.dataset.step);
+      s.disabled = !reachable(n);
+      s.classList.remove("active", "done");
+      if (n === activeTab) {
+        s.classList.add("active");
+      } else if (
+        (n === 1 && connected) ||
+        (n === 2 && hasEntity) ||
+        (n === 3 && scanning)
+      ) {
+        s.classList.add("done");
+      }
+    });
+  }
 
-    // Step pills
-    stepsEl.querySelectorAll(".step").forEach((s) => s.classList.remove("active", "done"));
-    if (!connected) {
-      stepsEl.querySelector('[data-step="1"]').classList.add("active");
-    } else if (!hasEntity) {
-      stepsEl.querySelector('[data-step="1"]').classList.add("done");
-      stepsEl.querySelector('[data-step="2"]').classList.add("active");
-    } else if (!scanning) {
-      stepsEl.querySelector('[data-step="1"]').classList.add("done");
-      stepsEl.querySelector('[data-step="2"]').classList.add("done");
-      stepsEl.querySelector('[data-step="3"]').classList.add("active");
-    } else {
-      stepsEl.querySelectorAll(".step").forEach((s) => s.classList.add("done"));
-    }
+  // Click-to-switch on the steps bar.
+  stepsEl.querySelectorAll(".step").forEach((s) => {
+    s.addEventListener("click", () => {
+      const n = Number(s.dataset.step);
+      if (reachable(n)) switchTab(n);
+    });
+  });
+
+  // Auto-advance helpers — call when state transitions complete.
+  function maybeAutoAdvance() {
+    const state = ws.getState();
+    const connected = state === "authed" || state === "streaming";
+    if (activeTab === 1 && connected) switchTab(2);
+    else if (activeTab === 2 && pickedEntity) switchTab(3);
   }
 
   // ----- Streamer ---------------------------------------------------------
@@ -317,39 +354,95 @@
     },
   });
 
-  // ----- RSSI display state ----------------------------------------------
-  const trendBuffer = [];
-  const TREND_WINDOW = 8;
-  const EMA_ALPHA = 0.4;
+  // ----- RSSI noise filtering (v0.4.1) -----------------------------------
+  // BLE RSSI on phones is noisy: multipath fading, body shadowing, and
+  // adjacent-channel interference can swing readings by 10-20 dB even
+  // when standing still. The pipeline:
+  //
+  //   raw → median(last 3 raw) → EMA(alpha=0.25) → trend window
+  //
+  // Median rejects single-sample outliers (one stray -98 dBm reading
+  // can't pull the smoothed value down). EMA smooths the rest. The
+  // trend computation averages last 4 vs prior 4 samples instead of
+  // 2 vs 2 — less sensitive to short transient bursts.
+  //
+  // Bucket labels use hysteresis: entering HOT needs ≥-53 dBm but the
+  // label stays HOT until you drop below -58. Stops the bucket label
+  // from flickering when you're sitting on a boundary.
+  const TREND_WINDOW = 12;
+  const EMA_ALPHA = 0.25;
+  const MEDIAN_WINDOW = 3;
+  const rawBuffer = [];      // last MEDIAN_WINDOW raw samples for median filter
+  const trendBuffer = [];    // last TREND_WINDOW smoothed samples for trend
   let smoothedRssi = null;
   let lastBucketLabel = null;
   // Nearby BLE devices map: name -> { latestRssi, latestTs }
   const nearby = new Map();
   let nearbyRenderTimer = null;
 
+  function medianOf(arr) {
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  }
+
   function pushRssi(raw) {
-    if (smoothedRssi === null) smoothedRssi = raw;
-    else smoothedRssi = EMA_ALPHA * raw + (1 - EMA_ALPHA) * smoothedRssi;
+    rawBuffer.push(raw);
+    while (rawBuffer.length > MEDIAN_WINDOW) rawBuffer.shift();
+    // Use the median once we have a full window; otherwise pass raw
+    // through so the user sees SOMETHING quickly at scan start.
+    const filtered = rawBuffer.length >= MEDIAN_WINDOW
+      ? medianOf(rawBuffer)
+      : raw;
+    if (smoothedRssi === null) smoothedRssi = filtered;
+    else smoothedRssi = EMA_ALPHA * filtered + (1 - EMA_ALPHA) * smoothedRssi;
     trendBuffer.push(smoothedRssi);
     while (trendBuffer.length > TREND_WINDOW) trendBuffer.shift();
   }
 
   function computeTrend() {
     const buf = trendBuffer;
-    if (buf.length < 4) return { arrow: "·", label: "settling" };
-    const recent = (buf[buf.length - 1] + buf[buf.length - 2]) / 2;
-    const earlier = (buf[buf.length - 4] + buf[buf.length - 3]) / 2;
+    if (buf.length < 8) return { arrow: "·", label: "settling" };
+    // Wider window: average last 4 vs prior 4. Less sensitive to single-
+    // sample jitter than the v0.4 2-vs-2 comparison.
+    const recent = (buf[buf.length - 1] + buf[buf.length - 2] + buf[buf.length - 3] + buf[buf.length - 4]) / 4;
+    const earlier = (buf[buf.length - 5] + buf[buf.length - 6] + buf[buf.length - 7] + buf[buf.length - 8]) / 4;
     const delta = recent - earlier;
     if (delta > 2) return { arrow: "↑", label: "getting closer" };
     if (delta < -2) return { arrow: "↓", label: "getting further" };
     return { arrow: "→", label: "stable" };
   }
 
+  // Hysteretic bucket assignment: entering a bucket has tighter threshold
+  // than leaving it, so the label doesn't flicker on the boundary.
   function rssiBucketFor(rssi) {
-    if (rssi >= -55) return { label: "HOT", cls: "rssi-bucket-hot" };
-    if (rssi >= -70) return { label: "warm", cls: "rssi-bucket-warm" };
-    if (rssi >= -85) return { label: "cool", cls: "rssi-bucket-cool" };
-    return { label: "cold", cls: "rssi-bucket-cold" };
+    const HYST = 3;  // dB
+    // Enter thresholds: HOT >= -55, warm >= -70, cool >= -85
+    // Leave (relax) by HYST dB before dropping to next-lower bucket.
+    const prev = lastBucketLabel;
+    function bucket(label, cls) { return { label, cls }; }
+    if (prev === "HOT") {
+      if (rssi >= -55 - HYST) return bucket("HOT", "rssi-bucket-hot");
+      if (rssi >= -70 - HYST) return bucket("warm", "rssi-bucket-warm");
+      if (rssi >= -85 - HYST) return bucket("cool", "rssi-bucket-cool");
+      return bucket("cold", "rssi-bucket-cold");
+    }
+    if (prev === "warm") {
+      if (rssi >= -55) return bucket("HOT", "rssi-bucket-hot");
+      if (rssi >= -70 - HYST) return bucket("warm", "rssi-bucket-warm");
+      if (rssi >= -85 - HYST) return bucket("cool", "rssi-bucket-cool");
+      return bucket("cold", "rssi-bucket-cold");
+    }
+    if (prev === "cool") {
+      if (rssi >= -55) return bucket("HOT", "rssi-bucket-hot");
+      if (rssi >= -70) return bucket("warm", "rssi-bucket-warm");
+      if (rssi >= -85 - HYST) return bucket("cool", "rssi-bucket-cool");
+      return bucket("cold", "rssi-bucket-cold");
+    }
+    // Default (no prior bucket, or coming from cold) — strict thresholds.
+    if (rssi >= -55) return bucket("HOT", "rssi-bucket-hot");
+    if (rssi >= -70) return bucket("warm", "rssi-bucket-warm");
+    if (rssi >= -85) return bucket("cool", "rssi-bucket-cool");
+    return bucket("cold", "rssi-bucket-cold");
   }
 
   function showError(msg) {
@@ -420,6 +513,7 @@
         // Switch the BLE name filter to this device.
         bleNameEl.value = name;
         // Reset local smoothing since we changed target.
+        rawBuffer.length = 0;
         trendBuffer.length = 0;
         smoothedRssi = null;
         lastBucketLabel = null;
@@ -472,20 +566,25 @@
     localStorage.setItem("ble_mac", bleMacEl.value.trim());
 
     try {
+      // Swap scan-section out for rssi-section — only the active surface
+      // is visible within the Scan tab.
+      scanSection.style.display = "none";
       rssiSection.style.display = "block";
+      rawBuffer.length = 0;
       trendBuffer.length = 0;
       smoothedRssi = null;
       lastBucketLabel = null;
       nearby.clear();
       updateRssiDisplay(null);
 
-      const targetName = bleNameEl.value.trim().toLowerCase();
-      // Active scan: pass a name-prefix filter when we have one so Chrome
-      // reduces noise at the OS level. Empty = scan everything (used for
-      // the "nearby devices" picker fallback).
-      const scanOpts = targetName
-        ? { filters: [{ namePrefix: bleNameEl.value.trim() }] }
-        : { acceptAllAdvertisements: true };
+      // v0.4.1: ALWAYS scan all advertisements. Previously the auto-
+      // detected name prefix was passed to Chrome's OS-level filter,
+      // which silently dropped every advertisement when the prefix
+      // didn't match the BLE-broadcast name — and the "nearby" picker
+      // (whose whole purpose is to reveal the real name) also got
+      // nothing. Now: scan everything, JS-filter for display, JS-
+      // populate nearby so the user can pick the right name.
+      const scanOpts = { acceptAllAdvertisements: true };
 
       scanAbortController = new AbortController();
       navigator.bluetooth.addEventListener(
@@ -568,6 +667,14 @@
     }
     scanBtn.disabled = false;
     saveBtn.disabled = false;
+    // v0.4.1: hide the RSSI display + show Start Scan again so the user
+    // gets a clean "ready" surface, not the frozen Stop button sitting
+    // next to stale RSSI numbers.
+    rssiSection.style.display = "none";
+    scanSection.style.display = "block";
+    clearError();
+    updateRssiDisplay(null);
+    streamStateEl.style.display = "none";
     updateStepIndicator();
   }
 
@@ -584,7 +691,7 @@
   }
 
   // ----- Initial state ----------------------------------------------------
-  updateStepIndicator();
+  switchTab(1);  // always start on Setup
   if (haUrlEl.value && haTokenEl.value) {
     ws.connect(haUrlEl.value, haTokenEl.value);
   }
