@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.1";
+  const APP_VERSION = "0.7.2";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -301,6 +301,10 @@
       entityPicker.setMode(mode);  // sync filter to current mode
       entityPicker.load(ws);
       loadAreas(ws);  // v0.5: populate area picker for identify mode
+      // v0.7.2: if Wi-Fi mode is the restored choice from localStorage,
+      // batch-query capabilities so the picker narrows on first load
+      // (not just on mode-toggle clicks).
+      if (mode === "wifi") loadWifiCapabilities();
     }
     if (state === "disconnected" || state === "error") {
       // Note: don't stop the streamer here — it self-resubscribes on the
@@ -409,8 +413,60 @@
       identifyConfirmedEl.style.display = "none";
       updateTab3Panels();
       updateStepIndicator();
+      // v0.7.2: when switching to Wi-Fi mode, batch-query capabilities
+      // so the picker narrows to actually-Wi-Fi-trackable entities.
+      // mobile_app GPS trackers, Plex device_trackers, etc. get filtered.
+      if (newMode === "wifi") {
+        loadWifiCapabilities();
+      }
     });
   });
+
+  // v0.7.2: batch wifi_find_capability lookup. Calls
+  // home_insights/wifi_find_capability with every device_tracker entity_id
+  // and pushes the response into the picker. Gracefully degrades when
+  // the backend is pre-v1.21.1 (unknown_command → fall back to showing
+  // all device_trackers + a banner).
+  async function loadWifiCapabilities() {
+    if (!(ws.getState() === "authed" || ws.getState() === "streaming")) return;
+    const allDeviceTrackers = [];
+    // The picker holds raw entities behind a closure; we need our own
+    // device-tracker list. Cheapest source is HA's registry, which the
+    // picker already loaded — re-fetch is fine (it's cached server-side).
+    let registry;
+    try {
+      registry = await ws.request({ type: "config/entity_registry/list" });
+    } catch (_) {
+      return;  // Picker stays in fall-back "all device_trackers" mode.
+    }
+    for (const e of registry ?? []) {
+      const eid = e.entity_id ?? "";
+      if (eid.startsWith("device_tracker.")) allDeviceTrackers.push(eid);
+    }
+    if (!allDeviceTrackers.length) return;
+    try {
+      const resp = await ws.request({
+        type: "home_insights/wifi_find_capability",
+        entity_ids: allDeviceTrackers,
+      });
+      entityPicker.setWifiCapabilities(resp?.capabilities ?? {});
+    } catch (e) {
+      const msg = e?.message ?? "";
+      if (/unknown[_ ]command/i.test(msg)) {
+        // Backend is pre-v1.21.1. Picker stays in fall-back mode;
+        // surface the situation so the user knows why filtering isn't
+        // narrowing.
+        if (entityListHintEl) {
+          entityListHintEl.innerHTML =
+            "<strong>Pre-filter unavailable</strong> — update HA Insights "
+            + "to v1.21.1+ to narrow the picker to only Wi-Fi-trackable "
+            + "entities. Showing all device-trackers for now.";
+        }
+      }
+      // Other errors are silently ignored; the user can still pick from
+      // the unfiltered list.
+    }
+  }
 
   // ----- Area registry ----------------------------------------------------
   // Cache of {area_id, name} loaded after auth. Populates the identify-

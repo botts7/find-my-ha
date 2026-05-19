@@ -120,6 +120,12 @@
     let allEntities = [];      // full registry list (filtered to BLE OR identifiable)
     let filtered = [];
     let selected = null;
+    // v0.7.2: per-entity Wi-Fi trackability map populated by the host
+    // via setWifiCapabilities() after it calls home_insights/wifi_find_capability.
+    // When non-null, wifi-mode filtering narrows to only is_trackable=true
+    // entities. When null (HA Insights pre-v1.21.1, or query failed),
+    // we fall back to showing every device_tracker.
+    let wifiCapabilities = null;
     // v0.5: mode toggle — "ble" (default) shows BLE-trackable entities for
     // warmer/colder; "identify" shows controllable entities for the
     // flash-and-verify workflow.
@@ -136,10 +142,19 @@
         predicate = isIdentifiable;
       } else if (mode === "wifi") {
         // v0.7.0: Wi-Fi find — entity IS the user's phone tracker.
-        // Show every device_tracker. The wifi_find_self WS handler
-        // validates Wi-Fi-trackability and returns is_trackable=false
-        // with an explanation if the picked entity has no Wi-Fi attrs.
-        predicate = (e) => (e.entity_id ?? "").startsWith("device_tracker.");
+        // v0.7.2: when wifi_find_capability batch data is available,
+        // narrow to is_trackable=true entries. Otherwise (pre-v1.21.1
+        // backend, or query failed), fall back to all device_trackers
+        // so the user can still try.
+        predicate = (e) => {
+          const eid = e.entity_id ?? "";
+          if (!eid.startsWith("device_tracker.")) return false;
+          if (wifiCapabilities) {
+            const cap = wifiCapabilities.get(eid);
+            return cap?.is_trackable === true;
+          }
+          return true;
+        };
       } else {
         predicate = isLikelyBleTrackable;
       }
@@ -300,15 +315,41 @@
         if (mode === newMode) return;
         mode = newMode;
         selected = null;
+        // Switching AWAY from wifi clears the cap data; the host
+        // re-fetches when switching back. Keeps caches fresh and
+        // avoids stale is_trackable flags after device state changes.
+        if (newMode !== "wifi") wifiCapabilities = null;
         if (rawEntities.length) {
           applyMode();
           const label =
             mode === "identify"
               ? "identifiable"
               : mode === "wifi"
-                ? "device-tracker"
+                ? wifiCapabilities ? "Wi-Fi-trackable" : "device-tracker"
                 : "BLE-trackable";
           setStatus(`${allEntities.length} ${label} entities.`);
+        }
+      },
+      // v0.7.2: ingest the batch wifi_find_capability response.
+      // `caps` is a {entity_id: {is_trackable, reason, ...}} dict.
+      // Re-runs the filter so the picker narrows in place.
+      setWifiCapabilities(caps) {
+        if (!caps) {
+          wifiCapabilities = null;
+        } else {
+          wifiCapabilities = new Map(Object.entries(caps));
+        }
+        if (mode === "wifi") {
+          applyMode();
+          if (wifiCapabilities) {
+            const trackable = allEntities.length;
+            const total = rawEntities.filter(
+              (e) => (e.entity_id ?? "").startsWith("device_tracker."),
+            ).length;
+            setStatus(
+              `${trackable} of ${total} device-trackers expose Wi-Fi RSSI.`,
+            );
+          }
         }
       },
       getMode() { return mode; },
