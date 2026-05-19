@@ -7,6 +7,11 @@
 (function () {
   "use strict";
 
+  // v0.5.4: render the running version on screen so the user can tell
+  // at a glance whether their browser is serving the latest deploy.
+  // BUMP THIS in lockstep with sw.js CACHE_VERSION on every release.
+  const APP_VERSION = "0.5.4";
+
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
 
@@ -52,6 +57,17 @@
   const flagUrlInput = $("flag-url");
 
   const themeToggle = $("theme-toggle");
+  const versionPillEl = $("version-pill");
+  if (versionPillEl) {
+    versionPillEl.textContent = "v" + APP_VERSION;
+    versionPillEl.addEventListener("click", () => {
+      window.open(
+        "https://github.com/botts7/find-my-ha/releases",
+        "_blank",
+        "noopener",
+      );
+    });
+  }
 
   // v0.5: walking-verify mode refs
   const modeBleBtn = $("mode-ble-btn");
