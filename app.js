@@ -53,6 +53,19 @@
 
   const themeToggle = $("theme-toggle");
 
+  // v0.5: walking-verify mode refs
+  const modeBleBtn = $("mode-ble-btn");
+  const modeIdentifyBtn = $("mode-identify-btn");
+  const modeHelpEl = $("mode-help");
+  const identifySection = $("identify-section");
+  const identifyTargetEl = $("identify-target");
+  const identifyStateEl = $("identify-state");
+  const flashBtn = $("flash-btn");
+  const identifyErrorEl = $("identify-error");
+  const identifyConfirmedEl = $("identify-confirmed");
+  const areaSelectEl = $("area-select");
+  const confirmAreaBtn = $("confirm-area-btn");
+
   // ----- Theme override ---------------------------------------------------
   const savedTheme = localStorage.getItem("theme");
   if (savedTheme === "light" || savedTheme === "dark") {
@@ -178,7 +191,9 @@
 
     // Re-fetch registry on every authed transition — handles HA restart.
     if (state === "authed") {
+      entityPicker.setMode(mode);  // sync filter to current mode
       entityPicker.load(ws);
+      loadAreas(ws);  // v0.5: populate area picker for identify mode
     }
     if (state === "disconnected" || state === "error") {
       // Note: don't stop the streamer here — it self-resubscribes on the
@@ -225,6 +240,154 @@
     switchTab(1);  // disconnected → kick back to Setup tab
   });
 
+  // ----- Mode toggle (v0.5: BLE find vs Identify & verify) ---------------
+  // localStorage preserves choice across sessions.
+  let mode = localStorage.getItem("find_mode") || "ble";
+
+  function applyModeButtons() {
+    modeBleBtn.classList.toggle("active", mode === "ble");
+    modeIdentifyBtn.classList.toggle("active", mode === "identify");
+    modeHelpEl.innerHTML = mode === "identify"
+      ? "<strong>Identify &amp; verify</strong>: flash any controllable entity (light, "
+        + "switch, fan, lock, siren) and confirm which room you're in. Works for "
+        + "non-BLE devices."
+      : "<strong>BLE find</strong>: warmer/colder for BLE-trackable devices (Hue, "
+        + "AirTag, BTHome, BLE locks).";
+  }
+  applyModeButtons();
+
+  [modeBleBtn, modeIdentifyBtn].forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const newMode = btn.dataset.mode;
+      if (newMode === mode) return;
+      mode = newMode;
+      localStorage.setItem("find_mode", mode);
+      applyModeButtons();
+      entityPicker.setMode(mode);
+      pickedEntity = null;
+      updateEntitySelectedDisplay(null);
+      identifyTargetEl.style.display = "none";
+      identifyConfirmedEl.style.display = "none";
+      updateTab3Panels();
+      updateStepIndicator();
+    });
+  });
+
+  // ----- Area registry ----------------------------------------------------
+  // Cache of {area_id, name} loaded after auth. Populates the identify-
+  // mode area-picker dropdown so the user can confirm "I'm here".
+  let areas = [];
+
+  async function loadAreas(ws) {
+    try {
+      const list = await ws.request({ type: "config/area_registry/list" });
+      areas = (list ?? [])
+        .map((a) => ({ id: a.area_id || a.id, name: a.name }))
+        .filter((a) => a.id && a.name)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      // Rebuild area select.
+      areaSelectEl.innerHTML = '<option value="">— pick area —</option>';
+      areas.forEach((a) => {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        opt.textContent = a.name;
+        areaSelectEl.appendChild(opt);
+      });
+    } catch (e) {
+      // Non-fatal — area picker just won't populate.
+      dlog("loadAreas failed:", e);
+    }
+  }
+
+  // ----- Identify (flash) helper -----------------------------------------
+  // Picks the right service for the entity's domain. Vendor-aware
+  // identify (ZHA effect, Z-Wave Indicator CC, LIFX flash) is HA Insights'
+  // job — we just do a basic toggle here. Lights get .toggle twice
+  // (off→on→off or on→off→on) to be visibly noticeable.
+  async function flashEntity(entry) {
+    const eid = entry.entity_id;
+    const domain = eid.split(".")[0];
+    const toggleCall = (svc) => ws.request({
+      type: "call_service",
+      domain,
+      service: svc,
+      service_data: { entity_id: eid },
+    });
+    // For lights/switches/fans, two toggles produces a visible blink
+    // while restoring original state.
+    if (domain === "light" || domain === "switch" || domain === "fan"
+        || domain === "input_boolean") {
+      await toggleCall("toggle");
+      await new Promise((r) => setTimeout(r, 600));
+      await toggleCall("toggle");
+      return;
+    }
+    // Cover: open/close briefly
+    if (domain === "cover") {
+      await toggleCall("toggle");
+      return;
+    }
+    // Scenes/scripts/automations: activate
+    if (domain === "scene") {
+      await ws.request({
+        type: "call_service",
+        domain: "scene", service: "turn_on",
+        service_data: { entity_id: eid },
+      });
+      return;
+    }
+    if (domain === "script" || domain === "automation") {
+      await ws.request({
+        type: "call_service",
+        domain, service: "turn_on",
+        service_data: { entity_id: eid },
+      });
+      return;
+    }
+    // Siren / lock / valve / vacuum / media_player / remote / climate /
+    // humidifier — generic toggle. If the domain doesn't support
+    // toggle, fall through to homeassistant.toggle.
+    try {
+      await toggleCall("toggle");
+    } catch (_) {
+      await ws.request({
+        type: "call_service",
+        domain: "homeassistant", service: "toggle",
+        service_data: { entity_id: eid },
+      });
+    }
+  }
+
+  // ----- Current state fetcher (identify-mode display) -------------------
+  async function fetchState(entityId) {
+    try {
+      const states = await ws.request({ type: "get_states" });
+      const s = (states ?? []).find((x) => x.entity_id === entityId);
+      return s ?? null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ----- Tab 3 panel routing ---------------------------------------------
+  // In Tab 3, show scan-section / rssi-section for BLE mode; identify-
+  // section for identify mode. Caller (updateStepIndicator) decides
+  // whether Tab 3 is visible at all.
+  function updateTab3Panels() {
+    if (mode === "identify") {
+      identifySection.style.display = "block";
+      scanSection.style.display = "none";
+      rssiSection.style.display = "none";
+    } else {
+      identifySection.style.display = "none";
+      // scan-section vs rssi-section is handled by scanning state below.
+      if (!streamer.isActive()) {
+        scanSection.style.display = "block";
+        rssiSection.style.display = "none";
+      }
+    }
+  }
+
   // ----- Entity picker ----------------------------------------------------
   const entityPicker = new EntityPicker({
     inputEl: entitySearchEl,
@@ -233,16 +396,45 @@
     onPick: (entry) => {
       pickedEntity = entry;
       localStorage.setItem("ha_entity_id", entry.entity_id);
-      const ble = entityPicker.getBleInfo(entry);
-      if (ble) {
-        bleNameEl.value = ble.suggested_name_prefix || "";
-        bleMacEl.value = ble.bluetooth_mac || "";
-        if (ble.bluetooth_mac) localStorage.setItem("ble_mac", ble.bluetooth_mac);
+      identifyConfirmedEl.style.display = "none";
+      identifyErrorEl.style.display = "none";
+      if (mode === "ble") {
+        const ble = entityPicker.getBleInfo(entry);
+        if (ble) {
+          bleNameEl.value = ble.suggested_name_prefix || "";
+          bleMacEl.value = ble.bluetooth_mac || "";
+          if (ble.bluetooth_mac) localStorage.setItem("ble_mac", ble.bluetooth_mac);
+        } else {
+          bleNameEl.value = "";
+          bleMacEl.value = "";
+        }
+        updateEntitySelectedDisplay(ble);
       } else {
-        bleNameEl.value = "";
-        bleMacEl.value = "";
+        // v0.5 identify mode: show entity name + live state.
+        const label = entry.name || entry.original_name || entry.entity_id;
+        identifyTargetEl.textContent =
+          `Target: ${label} (${entry.entity_id})`;
+        identifyTargetEl.style.display = "block";
+        // Pre-select the current area in the dropdown.
+        areaSelectEl.value = entry.area_id || "";
+        // Fetch and display current state.
+        const s = await fetchState(entry.entity_id);
+        if (s) {
+          identifyStateEl.innerHTML =
+            '<span class="label">State:</span> '
+            + '<span class="value state"></span>'
+            + ' <span class="label" style="margin-left: 12px;">Area:</span> '
+            + '<span class="value area"></span>';
+          identifyStateEl.querySelector(".value.state").textContent = s.state ?? "unknown";
+          const areaName = entry.area_id
+            ? (areas.find((a) => a.id === entry.area_id)?.name || entry.area_id)
+            : "— unassigned —";
+          identifyStateEl.querySelector(".value.area").textContent = areaName;
+        } else {
+          identifyStateEl.innerHTML =
+            '<span class="label">State unknown (entity not in get_states).</span>';
+        }
       }
-      updateEntitySelectedDisplay(ble);
       updateStepIndicator();
       maybeAutoAdvance();
     },
@@ -283,13 +475,14 @@
     tabPanels.forEach((p) => {
       p.classList.toggle("active", Number(p.dataset.panel) === n);
     });
+    if (n === 3) updateTab3Panels();
     updateStepIndicator();
     // Auto-scroll to top so the user sees the new panel from the start.
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   // 1 = Setup tab reachable always; 2 reachable when connected; 3 when
-  // connected AND entity picked.
+  // connected AND entity picked. Identical for both modes.
   function reachable(n) {
     const state = ws.getState();
     const connected = state === "authed" || state === "streaming";
@@ -695,6 +888,73 @@
     streamStateEl.style.display = "none";
     updateStepIndicator();
   }
+
+  // ----- Identify mode handlers (v0.5) -----------------------------------
+  flashBtn.addEventListener("click", async () => {
+    identifyErrorEl.style.display = "none";
+    if (!pickedEntity) {
+      identifyErrorEl.textContent = "Pick an entity first.";
+      identifyErrorEl.style.display = "block";
+      return;
+    }
+    flashBtn.disabled = true;
+    flashBtn.textContent = "🔆 Flashing…";
+    try {
+      await flashEntity(pickedEntity);
+      flashBtn.textContent = "🔆 Flash again";
+      if (typeof navigator.vibrate === "function") navigator.vibrate(40);
+    } catch (e) {
+      const msg = e?.error?.message ?? e?.message ?? String(e);
+      identifyErrorEl.textContent = "Flash failed: " + msg;
+      identifyErrorEl.style.display = "block";
+      flashBtn.textContent = "🔆 Flash this entity";
+    } finally {
+      flashBtn.disabled = false;
+    }
+  });
+
+  confirmAreaBtn.addEventListener("click", async () => {
+    identifyErrorEl.style.display = "none";
+    identifyConfirmedEl.style.display = "none";
+    if (!pickedEntity) {
+      identifyErrorEl.textContent = "Pick an entity first.";
+      identifyErrorEl.style.display = "block";
+      return;
+    }
+    const areaId = areaSelectEl.value || null;
+    if (!areaId) {
+      identifyErrorEl.textContent = "Pick an area from the dropdown first.";
+      identifyErrorEl.style.display = "block";
+      return;
+    }
+    confirmAreaBtn.disabled = true;
+    confirmAreaBtn.textContent = "Saving…";
+    try {
+      await ws.request({
+        type: "config/entity_registry/update",
+        entity_id: pickedEntity.entity_id,
+        area_id: areaId,
+      });
+      // Mirror locally so subsequent picks reflect the new area.
+      pickedEntity.area_id = areaId;
+      const areaName = areas.find((a) => a.id === areaId)?.name || areaId;
+      identifyConfirmedEl.innerHTML =
+        '✓ Confirmed <strong>' + pickedEntity.entity_id + '</strong>'
+        + ' is in <strong></strong>.';
+      identifyConfirmedEl.querySelector("strong:last-child").textContent = areaName;
+      identifyConfirmedEl.style.display = "block";
+      // Update the displayed state area.
+      const areaSpan = identifyStateEl.querySelector(".value.area");
+      if (areaSpan) areaSpan.textContent = areaName;
+    } catch (e) {
+      const msg = e?.error?.message ?? e?.message ?? String(e);
+      identifyErrorEl.textContent = "Failed to update area: " + msg;
+      identifyErrorEl.style.display = "block";
+    } finally {
+      confirmAreaBtn.disabled = false;
+      confirmAreaBtn.textContent = "I'm here ✓";
+    }
+  });
 
   // ----- Service worker — v0.4 versioned with cache busting --------------
   if ("serviceWorker" in navigator) {
