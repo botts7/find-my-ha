@@ -131,7 +131,18 @@
     let rawEntities = [];
 
     function applyMode() {
-      const predicate = mode === "identify" ? isIdentifiable : isLikelyBleTrackable;
+      let predicate;
+      if (mode === "identify") {
+        predicate = isIdentifiable;
+      } else if (mode === "wifi") {
+        // v0.7.0: Wi-Fi find — entity IS the user's phone tracker.
+        // Show every device_tracker. The wifi_find_self WS handler
+        // validates Wi-Fi-trackability and returns is_trackable=false
+        // with an explanation if the picked entity has no Wi-Fi attrs.
+        predicate = (e) => (e.entity_id ?? "").startsWith("device_tracker.");
+      } else {
+        predicate = isLikelyBleTrackable;
+      }
       allEntities = rawEntities
         .filter(predicate)
         .sort((a, b) => {
@@ -253,13 +264,22 @@
             setStatus(
               mode === "identify"
                 ? "No identifiable entities found in your HA instance."
-                : "No BLE-trackable entities. Add a Bluetooth proxy, "
-                  + "BTHome device, or iBeacon to enable BLE find — or "
-                  + "switch to Identify mode to walk-verify other entities.",
+                : mode === "wifi"
+                  ? "No device_tracker entities. UniFi / Asuswrt / "
+                    + "Omada integrations expose your phone as a "
+                    + "device_tracker — install one to enable Wi-Fi find."
+                  : "No BLE-trackable entities. Add a Bluetooth proxy, "
+                    + "BTHome device, or iBeacon to enable BLE find — or "
+                    + "switch to Identify mode to walk-verify other entities.",
               true,
             );
           } else {
-            const label = mode === "identify" ? "identifiable" : "BLE-trackable";
+            const label =
+              mode === "identify"
+                ? "identifiable"
+                : mode === "wifi"
+                  ? "device-tracker"
+                  : "BLE-trackable";
             setStatus(`${allEntities.length} ${label} entities loaded.`);
           }
           // Restore previous selection if it still exists.
@@ -276,13 +296,18 @@
         }
       },
       setMode(newMode) {
-        if (newMode !== "ble" && newMode !== "identify") return;
+        if (newMode !== "ble" && newMode !== "identify" && newMode !== "wifi") return;
         if (mode === newMode) return;
         mode = newMode;
         selected = null;
         if (rawEntities.length) {
           applyMode();
-          const label = mode === "identify" ? "identifiable" : "BLE-trackable";
+          const label =
+            mode === "identify"
+              ? "identifiable"
+              : mode === "wifi"
+                ? "device-tracker"
+                : "BLE-trackable";
           setStatus(`${allEntities.length} ${label} entities.`);
         }
       },

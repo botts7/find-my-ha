@@ -242,6 +242,53 @@
       return sendRaw(Object.assign({}, payload, { id }));
     }
 
+    // v0.7.0: subscription helper for server-pushed event streams (HA
+    // pattern: send a request, server replies with a result, then sends
+    // `{type:"event", id, event:{...}}` messages with the same id until
+    // the client unsubscribes via `unsubscribe_events`).
+    //
+    // Returns a Promise resolving to `{ result, unsubscribe }`:
+    //   - `result` is the server's initial-state reply (same shape
+    //     as `request()`).
+    //   - `unsubscribe()` removes the local event listener AND sends
+    //     `unsubscribe_events` so the server can clean up.
+    async function subscribe(payload, onEvent) {
+      if (state !== STATES.AUTHED && state !== STATES.STREAMING) {
+        throw new Error("Not authed");
+      }
+      const id = nextId++;
+      // Register listener BEFORE sending so we never miss an early event
+      // that might race with the result message.
+      const removeListener = onMessage((msg) => {
+        if (msg.type === "event" && msg.id === id && msg.event) {
+          try { onEvent(msg.event); } catch (_) { /* ignore */ }
+        }
+      });
+      let result;
+      try {
+        result = await new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          const ok = sendRaw(Object.assign({}, payload, { id }));
+          if (!ok) {
+            pending.delete(id);
+            reject(new Error("Send failed"));
+          }
+        });
+      } catch (e) {
+        removeListener();
+        throw e;
+      }
+      return {
+        result,
+        async unsubscribe() {
+          removeListener();
+          try {
+            await request({ type: "unsubscribe_events", subscription: id });
+          } catch (_) { /* best-effort — server reaps on WS close */ }
+        },
+      };
+    }
+
     function scheduleReconnect() {
       if (userClosed) return;
       clearReconnect();
@@ -320,6 +367,7 @@
       retryNow,
       request,
       send,
+      subscribe,
       onStateChange,
       onMessage,
       getState,

@@ -28,7 +28,7 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **v0.6.0 — native-select device picker (OS modal).**
+🚧 **v0.7.0 — Wi-Fi find walking warmer/colder (inverse multilateration).**
 Live at https://botts7.github.io/find-my-ha/. Tab 1 hardcoded
 visible; SW network-first for everything; visible version pill; JS
 error banner; force-update self-rescue button at the bottom.
@@ -48,6 +48,7 @@ Cumulative feature set:
 - **v0.5.8** — sticky Continue bar, mode-aware search placeholder, Flash style dropdown (Single / Loop), safe 2.5 s inter-toggle interval (avoids every vendor reset/pairing threshold), 60 s auto-stop, vibration feedback
 - **v0.5.9** — body padding now respects `env(safe-area-inset-bottom)` on notched iOS so the last entity row isn't covered by the Continue bar; Tab 2 search auto-focuses on entry for instant type-to-filter
 - **v0.6.0** — device picker is now a native `<select>` (matches the area picker pattern on Tab 3); on Android Chrome opens the full-screen searchable picker, on iOS opens the wheel modal. Inline scrollable list replaced; search box still filters the underlying option set
+- **v0.7.0** — third mode `📶 Wi-Fi`: pick your phone's `device_tracker`, walk through the house, the PWA subscribes to HA Insights `home_insights/wifi_find_self` (ships in v1.21.0) and streams your phone's per-AP RSSI through the same warmer/colder UI as BLE find. Inverse multilateration — the APs measure the phone, not the other way around. Freshness pill shows update cadence (UniFi is ~10-30 s)
 
 ## Quick start (early-access)
 
@@ -72,7 +73,7 @@ iOS users: install the HA Companion app — once the Companion feature request (
 
 ## Roadmap
 
-- **v0.1 → v0.6.0**: all *shipped*. See Status above + git log for the detailed trail.
+- **v0.1 → v0.7.0**: all *shipped*. See Status above + git log for the detailed trail.
 
 ### Deferred — v0.6 walking-verify expansion (parked 2026-05-19)
 
