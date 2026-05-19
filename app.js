@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.5.9";
+  const APP_VERSION = "0.6.0";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -107,7 +107,11 @@
   const rssiSection = $("rssi-section");
 
   const entitySearchEl = $("entity-search");
-  const entityListEl = $("entity-list");
+  // v0.6.0: native <select> for OS-native modal device picker.
+  // Legacy entityListEl alias retained so any in-flight reference
+  // resolves to the same element.
+  const entitySelectEl = $("entity-select");
+  const entityListEl = entitySelectEl;
   const entityStatusEl = $("entity-status");
   const entitySelectedEl = $("entity-selected");
   const refreshEntitiesBtn = $("refresh-entities-btn");
@@ -502,7 +506,7 @@
   // ----- Entity picker ----------------------------------------------------
   const entityPicker = new EntityPicker({
     inputEl: entitySearchEl,
-    listEl: entityListEl,
+    selectEl: entitySelectEl,
     statusEl: entityStatusEl,
     onPick: async (entry) => {
       pickedEntity = entry;
