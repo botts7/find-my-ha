@@ -356,6 +356,24 @@
     .nearby-name { flex: 1; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
     .nearby-rssi { color: var(--muted); white-space: nowrap; }
 
+    /* v0.7.0: freshness pill for Wi-Fi find. UniFi/Asuswrt update
+       per-client signal at 10-30 s cadence, so users need to know
+       the displayed value isn't frozen — just slow. */
+    .freshness-pill {
+      display: inline-block;
+      margin: 8px auto 0;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.8em;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .freshness-pill.fresh { color: var(--ok); border-color: var(--ok); }
+    .freshness-pill.stale { color: var(--warm); border-color: var(--warm); }
+    .freshness-pill.frozen { color: var(--muted); }
+
     /* Flag-onboarding card */
     .flag-card {
       background: rgba(234, 179, 8, 0.08);
@@ -447,8 +465,9 @@
       <button id="refresh-entities-btn" class="secondary small">Refresh</button>
     </div>
     <div class="mode-toggle" role="tablist" aria-label="Find mode">
-      <button id="mode-ble-btn" class="mode-btn active" type="button" data-mode="ble">🔍 BLE find</button>
-      <button id="mode-identify-btn" class="mode-btn" type="button" data-mode="identify">🔆 Identify & verify</button>
+      <button id="mode-ble-btn" class="mode-btn active" type="button" data-mode="ble">🔍 BLE</button>
+      <button id="mode-identify-btn" class="mode-btn" type="button" data-mode="identify">🔆 Identify</button>
+      <button id="mode-wifi-btn" class="mode-btn" type="button" data-mode="wifi">📶 Wi-Fi</button>
     </div>
     <div class="hint" id="mode-help">
       <strong>BLE find</strong>: warmer/colder for BLE-trackable devices (Hue,
@@ -522,6 +541,23 @@
     </div>
   </section>
 
+  <!-- v0.7.0: Wi-Fi find — inverse-multilateration via HA's
+       wifi_find_self WS handler. The picked entity is the user's
+       PHONE; we stream its per-AP RSSI as the user walks. -->
+  <section id="wifi-find-section" style="display: none;">
+    <div class="hint" style="margin-bottom: 8px;">
+      📶 <strong>Wi-Fi find</strong>: the picked entity above is YOUR
+      PHONE's device tracker. Walk through your home — your AP's
+      RSSI changes as you move. Reception gets stronger near the AP
+      that lives in the room where the target device is. Slower
+      than BLE (~10–30 s between updates depending on your router),
+      but it works for any Wi-Fi device.
+    </div>
+    <button id="wifi-find-start-btn">📶 Start Wi-Fi find</button>
+    <div id="wifi-find-error" class="error" style="display: none;"></div>
+    <div id="wifi-find-state" class="hint" style="display: none;"></div>
+  </section>
+
   <section id="rssi-section" style="display: none;">
     <div class="rssi-display">
       <div class="rssi-value" id="rssi-value">— dBm</div>
@@ -530,12 +566,17 @@
       <div class="meta" id="rssi-meta"></div>
     </div>
     <div id="stream-state" class="hint" style="display: none;"></div>
+    <!-- v0.7.0: freshness pill for slow-cadence Wi-Fi find. Hidden
+         when in BLE mode (advertisements are ~1 Hz; no need). -->
+    <div id="freshness-pill" class="freshness-pill" style="display: none;">
+      <span id="freshness-label">last update — s ago</span>
+    </div>
     <div class="hint" style="margin-top: 8px;">
       📱 Hold phone screen up, in front of you. Walk slowly. Rotating
       the phone changes the antenna pattern more than walking
       does — small movements look like noise.
     </div>
-    <details style="margin-top: 16px;" open>
+    <details id="nearby-details" style="margin-top: 16px;" open>
       <summary style="cursor: pointer; color: var(--muted); font-size: 0.85em;">Nearby BLE devices (tap to switch target)</summary>
       <div id="nearby-list" class="nearby-list"></div>
     </details>
@@ -546,6 +587,7 @@
   <script src="ws_client.js"></script>
   <script src="entity_picker.js"></script>
   <script src="streamer.js"></script>
+  <script src="wifi_streamer.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

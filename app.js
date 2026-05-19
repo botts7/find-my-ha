@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.6.0";
+  const APP_VERSION = "0.7.0";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -148,6 +148,14 @@
   // v0.5: walking-verify mode refs
   const modeBleBtn = $("mode-ble-btn");
   const modeIdentifyBtn = $("mode-identify-btn");
+  // v0.7.0: Wi-Fi find — inverse-multilateration via wifi_find_self.
+  const modeWifiBtn = $("mode-wifi-btn");
+  const wifiFindSection = $("wifi-find-section");
+  const wifiFindStartBtn = $("wifi-find-start-btn");
+  const wifiFindErrorEl = $("wifi-find-error");
+  const wifiFindStateEl = $("wifi-find-state");
+  const freshnessPillEl = $("freshness-pill");
+  const freshnessLabelEl = $("freshness-label");
   const modeHelpEl = $("mode-help");
   const identifySection = $("identify-section");
   const identifyTargetEl = $("identify-target");
@@ -346,28 +354,48 @@
   function applyModeButtons() {
     modeBleBtn.classList.toggle("active", mode === "ble");
     modeIdentifyBtn.classList.toggle("active", mode === "identify");
-    modeHelpEl.innerHTML = mode === "identify"
-      ? "<strong>Identify &amp; verify</strong>: flash any controllable entity (light, "
-        + "switch, fan, lock, siren) and confirm which room you're in. Works for "
-        + "non-BLE devices."
-      : "<strong>BLE find</strong>: warmer/colder for BLE-trackable devices (Hue, "
-        + "AirTag, BTHome, BLE locks).";
-    // v0.5.8: mode-aware search placeholder + hint.
+    if (modeWifiBtn) modeWifiBtn.classList.toggle("active", mode === "wifi");
+    if (mode === "identify") {
+      modeHelpEl.innerHTML =
+        "<strong>Identify &amp; verify</strong>: flash any controllable "
+        + "entity (light, switch, fan, lock, siren) and confirm which "
+        + "room you're in. Works for non-BLE devices.";
+    } else if (mode === "wifi") {
+      modeHelpEl.innerHTML =
+        "<strong>Wi-Fi find</strong>: pick YOUR phone's device tracker. "
+        + "Walk through your home — your AP's RSSI changes as you move. "
+        + "Slower than BLE (~10-30 s between updates) but works for "
+        + "Wi-Fi devices.";
+    } else {
+      modeHelpEl.innerHTML =
+        "<strong>BLE find</strong>: warmer/colder for BLE-trackable "
+        + "devices (Hue, AirTag, BTHome, BLE locks).";
+    }
+    // v0.5.8 / v0.7.0: mode-aware search placeholder + hint.
     if (entitySearchEl) {
-      entitySearchEl.placeholder = mode === "identify"
-        ? "Search lights / switches / fans / scenes…"
-        : "Search BLE-trackable entities…";
+      entitySearchEl.placeholder =
+        mode === "identify"
+          ? "Search lights / switches / fans / scenes…"
+          : mode === "wifi"
+            ? "Search device_tracker entities (pick your phone)…"
+            : "Search BLE-trackable entities…";
     }
     if (entityListHintEl) {
-      entityListHintEl.innerHTML = mode === "identify"
-        ? "Lists all controllable entities. Connect first to populate."
-        : "Lists <code>device_tracker</code> and BLE-hinted "
-          + "<code>binary_sensor</code> entities. Connect first to populate.";
+      entityListHintEl.innerHTML =
+        mode === "identify"
+          ? "Lists all controllable entities. Connect first to populate."
+          : mode === "wifi"
+            ? "Pick YOUR phone's <code>device_tracker</code>. "
+              + "UniFi / Asuswrt / Omada integrations expose the phone "
+              + "with per-AP RSSI we can stream."
+            : "Lists <code>device_tracker</code> and BLE-hinted "
+              + "<code>binary_sensor</code> entities. Connect first to "
+              + "populate.";
     }
   }
   applyModeButtons();
 
-  [modeBleBtn, modeIdentifyBtn].forEach((btn) => {
+  [modeBleBtn, modeIdentifyBtn, modeWifiBtn].filter(Boolean).forEach((btn) => {
     btn.addEventListener("click", () => {
       const newMode = btn.dataset.mode;
       if (newMode === mode) return;
@@ -492,9 +520,20 @@
     if (mode === "identify") {
       identifySection.style.display = "block";
       scanSection.style.display = "none";
+      if (wifiFindSection) wifiFindSection.style.display = "none";
       rssiSection.style.display = "none";
+    } else if (mode === "wifi") {
+      identifySection.style.display = "none";
+      scanSection.style.display = "none";
+      // Wi-Fi find: start-section visible until streaming; rssi-section
+      // takes over once events flow.
+      if (!wifiStreamer.isActive()) {
+        if (wifiFindSection) wifiFindSection.style.display = "block";
+        rssiSection.style.display = "none";
+      }
     } else {
       identifySection.style.display = "none";
+      if (wifiFindSection) wifiFindSection.style.display = "none";
       // scan-section vs rssi-section is handled by scanning state below.
       if (!streamer.isActive()) {
         scanSection.style.display = "block";
@@ -681,6 +720,97 @@
       streamStateEl.textContent = labels[s] ?? "";
       streamStateEl.style.display = labels[s] ? "block" : "none";
       streamStateEl.className = "hint" + (s === "error" ? " error" : "");
+    },
+  });
+
+  // ----- Wi-Fi streamer (v0.7.0) -----------------------------------------
+  // Subscribes to home_insights/wifi_find_self and feeds incoming RSSI
+  // events into the same rssi-display element used by BLE find. Server-
+  // side already EMA-smooths, so we just trust rssi_smoothed and skip
+  // the local filtering pipeline (which is BLE-noise-tuned anyway).
+  let lastWifiSampleAt = 0;
+  let lastWifiSample = null;  // {ap_name, ap_identifier, signal_attribute, ap_matches_target}
+  let freshnessTimer = null;
+
+  function _updateFreshnessPill() {
+    if (!freshnessPillEl || !lastWifiSampleAt) return;
+    const ageSec = Math.floor((Date.now() - lastWifiSampleAt) / 1000);
+    let cls = "fresh";
+    if (ageSec >= 60) cls = "frozen";
+    else if (ageSec >= 25) cls = "stale";
+    freshnessPillEl.className = `freshness-pill ${cls}`;
+    freshnessLabelEl.textContent =
+      ageSec < 2 ? "just now"
+      : ageSec < 60 ? `last update ${ageSec} s ago`
+      : `last update ${Math.floor(ageSec / 60)} min ago`;
+  }
+
+  function _wifiBucketFor(dbm) {
+    // Mirror the wifi_find capability + detector thresholds. Slightly
+    // more permissive than BLE's HOT/WARM since Wi-Fi distances are
+    // longer.
+    if (dbm >= -50) return { label: "VERY CLOSE", cls: "rssi-bucket-hot" };
+    if (dbm >= -65) return { label: "PROBABLY HERE", cls: "rssi-bucket-warm" };
+    if (dbm >= -75) return { label: "MAYBE ADJACENT", cls: "rssi-bucket-cool" };
+    return { label: "WEAK", cls: "rssi-bucket-cold" };
+  }
+
+  function handleWifiSample(event) {
+    lastWifiSampleAt = Date.now();
+    lastWifiSample = event;
+    const dbm = event.rssi_smoothed ?? event.rssi_raw;
+    if (typeof dbm !== "number") return;
+    const bucket = _wifiBucketFor(dbm);
+    rssiValue.textContent = `${Math.round(dbm)} dBm`;
+    rssiValue.className = `rssi-value ${bucket.cls}`;
+    rssiBucket.textContent = bucket.label;
+    rssiBucket.className = `rssi-label ${bucket.cls}`;
+    // Trend arrow keys off whether this AP matches the target (if known)
+    // or the user's just-walked direction (compare to previous).
+    if (event.ap_matches_target) {
+      rssiTrend.textContent = "🎯 at target's AP";
+    } else if (event.ap_name) {
+      rssiTrend.textContent = `📶 ${event.ap_name}`;
+    } else {
+      rssiTrend.textContent = "·";
+    }
+    rssiMeta.textContent = event.signal_attribute
+      ? `via ${event.signal_attribute}` + (event._initial ? " · initial" : "")
+      : "";
+    // Flash the value to signal "new sample arrived" — same UX cue as BLE.
+    rssiValue.classList.remove("flash");
+    void rssiValue.offsetWidth;
+    rssiValue.classList.add("flash");
+    _updateFreshnessPill();
+  }
+
+  const wifiStreamer = new WifiStreamer({
+    wsClient: ws,
+    onSample: handleWifiSample,
+    onStateChange: (s) => {
+      const labels = {
+        idle: "",
+        subscribing: "subscribing to phone's AP signal…",
+        resubscribing: "reconnected — resubscribing…",
+        streaming: "streaming via Home Assistant ✓",
+        error: "stream error — check connection",
+      };
+      if (!wifiFindStateEl) return;
+      wifiFindStateEl.textContent = labels[s] ?? "";
+      wifiFindStateEl.style.display = labels[s] ? "block" : "none";
+      wifiFindStateEl.className = "hint" + (s === "error" ? " error" : "");
+    },
+    onInitialResult: (result) => {
+      if (!result) return;
+      if (result.is_trackable === false) {
+        wifiFindErrorEl.textContent =
+          (result.reason ?? "Picked entity is not Wi-Fi-trackable.")
+          + " Pick a different entity (your phone should expose rx_rssi / "
+          + "signal / signal_strength + ap_mac / bssid / host).";
+        wifiFindErrorEl.style.display = "block";
+      } else {
+        wifiFindErrorEl.style.display = "none";
+      }
     },
   });
 
@@ -986,7 +1116,82 @@
     }
   });
 
-  stopBtn.addEventListener("click", () => stopScanInternal());
+  stopBtn.addEventListener("click", () => {
+    // v0.7.0: stop button is mode-aware. In Wi-Fi mode it tears down
+    // the wifi_find_self subscription; in BLE mode the usual scan teardown.
+    if (mode === "wifi" && wifiStreamer.isActive()) {
+      stopWifiFindInternal();
+    } else {
+      stopScanInternal();
+    }
+  });
+
+  // ----- Wi-Fi find handlers (v0.7.0) -------------------------------------
+  if (wifiFindStartBtn) {
+    wifiFindStartBtn.addEventListener("click", async () => {
+      wifiFindErrorEl.style.display = "none";
+      if (!pickedEntity) {
+        wifiFindErrorEl.textContent = "Pick your phone's device_tracker entity first (Tab 2).";
+        wifiFindErrorEl.style.display = "block";
+        return;
+      }
+      if (!(ws.getState() === "authed" || ws.getState() === "streaming")) {
+        wifiFindErrorEl.textContent = "Not connected to Home Assistant.";
+        wifiFindErrorEl.style.display = "block";
+        return;
+      }
+      try {
+        // Reset Wi-Fi-specific state, then subscribe.
+        lastWifiSampleAt = 0;
+        lastWifiSample = null;
+        wifiFindSection.style.display = "none";
+        rssiSection.style.display = "block";
+        rssiSection.classList.add("scanning");
+        // Hide nearby-devices section in Wi-Fi mode (BLE-only concept).
+        const nearbyDetails = $("nearby-details");
+        if (nearbyDetails) nearbyDetails.style.display = "none";
+        if (freshnessPillEl) freshnessPillEl.style.display = "inline-block";
+        // Reset RSSI display to initial state.
+        rssiValue.textContent = "— dBm";
+        rssiValue.className = "rssi-value";
+        rssiBucket.textContent = "subscribing…";
+        rssiTrend.textContent = "·";
+        rssiMeta.textContent = "";
+        // Freshness pill 1-Hz updater.
+        if (freshnessTimer) clearInterval(freshnessTimer);
+        freshnessTimer = setInterval(_updateFreshnessPill, 1000);
+        await wifiStreamer.start(pickedEntity.entity_id);
+        wifiFindStartBtn.disabled = true;
+        updateStepIndicator();
+      } catch (e) {
+        const msg = e?.error?.message ?? e?.message ?? String(e);
+        wifiFindErrorEl.textContent = "Wi-Fi find subscribe failed: " + msg;
+        wifiFindErrorEl.style.display = "block";
+        // Restore the start surface.
+        rssiSection.style.display = "none";
+        wifiFindSection.style.display = "block";
+        if (freshnessPillEl) freshnessPillEl.style.display = "none";
+        if (freshnessTimer) { clearInterval(freshnessTimer); freshnessTimer = null; }
+      }
+    });
+  }
+
+  async function stopWifiFindInternal() {
+    if (freshnessTimer) { clearInterval(freshnessTimer); freshnessTimer = null; }
+    if (wifiStreamer.isActive()) {
+      try { await wifiStreamer.stop(); } catch (_) { /* ignore */ }
+    }
+    rssiSection.classList.remove("scanning");
+    rssiSection.style.display = "none";
+    wifiFindSection.style.display = "block";
+    if (freshnessPillEl) freshnessPillEl.style.display = "none";
+    if (wifiFindStartBtn) wifiFindStartBtn.disabled = false;
+    // Restore nearby-devices section visibility (BLE mode reuses it).
+    const nearbyDetails = $("nearby-details");
+    if (nearbyDetails) nearbyDetails.style.display = "";
+    updateRssiDisplay(null);
+    updateStepIndicator();
+  }
 
   function handleAdvertisement(event) {
     const rssi = event.rssi;
