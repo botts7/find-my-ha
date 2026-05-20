@@ -188,11 +188,29 @@
       selectEl.innerHTML = "";
       const placeholder = document.createElement("option");
       placeholder.value = "";
-      placeholder.textContent = filtered.length
-        ? `— pick a device (${filtered.length}) —`
-        : allEntities.length
-          ? "— no matches; clear search —"
-          : "— connect to HA first —";
+      // v0.7.3: the picker has three "empty" states, NOT two:
+      //   filtered.length>0     → "pick a device (N)"
+      //   allEntities.length>0  → search filter killed everything
+      //   rawEntities.length>0  → mode filter killed everything
+      //   rawEntities.length===0 → truly not loaded yet
+      // Previously the "no entities matched the mode" case was
+      // collapsed into "connect to HA first" — confusing when WS
+      // was actually connected but e.g. Wi-Fi mode found no
+      // trackable entities. Now each state gets its own copy.
+      if (filtered.length) {
+        placeholder.textContent = `— pick a device (${filtered.length}) —`;
+      } else if (allEntities.length) {
+        placeholder.textContent = "— no matches; clear search —";
+      } else if (rawEntities.length) {
+        placeholder.textContent =
+          mode === "wifi"
+            ? "— no Wi-Fi-trackable devices found —"
+            : mode === "identify"
+              ? "— no controllable entities found —"
+              : "— no BLE-trackable entities found —";
+      } else {
+        placeholder.textContent = "— connect to HA first —";
+      }
       selectEl.appendChild(placeholder);
       // Cap rendered options so a 3000-entity install doesn't drop a
       // huge DOM tree under iOS's wheel picker. 200 covers any
