@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.4";
+  const APP_VERSION = "0.7.5";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -150,6 +150,9 @@
   const modeIdentifyBtn = $("mode-identify-btn");
   // v0.7.0: Wi-Fi find — inverse-multilateration via wifi_find_self.
   const modeWifiBtn = $("mode-wifi-btn");
+  // v0.7.5: picker detail-level toggle (Name vs Name·entity_id).
+  const pickerDetailNameBtn = $("picker-detail-name");
+  const pickerDetailEntityBtn = $("picker-detail-entity");
   const wifiFindSection = $("wifi-find-section");
   const wifiFindStartBtn = $("wifi-find-start-btn");
   const wifiFindErrorEl = $("wifi-find-error");
@@ -422,6 +425,28 @@
       }
     });
   });
+
+  // v0.7.5: picker detail-level toggle. Defaults to "name" (friendly
+  // only) so dropdowns aren't polluted by MAC-like entity_ids from
+  // Omada / mobile_app / BLE proxies. User can switch to "entity"
+  // for disambiguation when two devices share a friendly name. The
+  // EntityPicker reads the persisted level from localStorage on
+  // init, so on first load we just need to highlight the right btn.
+  function applyPickerDetailButtons() {
+    if (!pickerDetailNameBtn || !pickerDetailEntityBtn) return;
+    const level = entityPicker.getDetailLevel?.() ?? "name";
+    pickerDetailNameBtn.classList.toggle("active", level === "name");
+    pickerDetailEntityBtn.classList.toggle("active", level === "entity");
+  }
+  [pickerDetailNameBtn, pickerDetailEntityBtn].filter(Boolean).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const newLevel = btn.dataset.detail;
+      if (!newLevel) return;
+      entityPicker.setDetailLevel?.(newLevel);
+      applyPickerDetailButtons();
+    });
+  });
+  applyPickerDetailButtons();
 
   // v0.7.4: hide the Wi-Fi mode button when the install has zero
   // candidates. We probe capability silently on connect (or on first

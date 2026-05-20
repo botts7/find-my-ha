@@ -120,6 +120,18 @@
     let allEntities = [];      // full registry list (filtered to BLE OR identifiable)
     let filtered = [];
     let selected = null;
+    // v0.7.5: detail level controls how options are labelled.
+    //   "name"   → friendly name only (default — Omada / mobile_app /
+    //              BLE-proxy entity_ids often contain MACs and clutter
+    //              the dropdown)
+    //   "entity" → friendly · entity_id (disambiguation when two
+    //              devices share a friendly name)
+    // Persisted in localStorage so the user only picks once.
+    let detailLevel = "name";
+    try {
+      const saved = global.localStorage?.getItem("findmyha:picker-detail");
+      if (saved === "entity" || saved === "name") detailLevel = saved;
+    } catch (_) { /* private-mode storage blocked */ }
     // v0.7.2: per-entity Wi-Fi trackability map populated by the host
     // via setWifiCapabilities() after it calls home_insights/wifi_find_capability.
     // When non-null, wifi-mode filtering narrows to only is_trackable=true
@@ -221,12 +233,22 @@
         const opt = document.createElement("option");
         opt.value = entry.entity_id;
         const friendly = entry.name || entry.original_name || entry.entity_id;
-        // Native pickers show option.textContent as one line. Compose
-        // friendly + entity_id with a separator so both are visible.
-        opt.textContent =
-          friendly === entry.entity_id
-            ? entry.entity_id
-            : `${friendly}  ·  ${entry.entity_id}`;
+        // v0.7.5: detail-level controls the label. "name" mode drops
+        // the entity_id suffix, which often contains a MAC on Omada /
+        // mobile_app / BLE-proxy entities and clutters the dropdown.
+        // Always set title so hovering exposes the entity_id even
+        // when it's hidden from the visible label.
+        opt.title = entry.entity_id;
+        if (detailLevel === "entity") {
+          opt.textContent =
+            friendly === entry.entity_id
+              ? entry.entity_id
+              : `${friendly}  ·  ${entry.entity_id}`;
+        } else {
+          // Friendly only. Falls back to entity_id when there's no
+          // friendly name to show.
+          opt.textContent = friendly;
+        }
         if (entry.entity_id === currentValue) opt.selected = true;
         selectEl.appendChild(opt);
       });
@@ -371,6 +393,18 @@
         }
       },
       getMode() { return mode; },
+      // v0.7.5: change the option-label detail level + persist.
+      // Accepted values: "name" (default), "entity".
+      setDetailLevel(newLevel) {
+        if (newLevel !== "name" && newLevel !== "entity") return;
+        if (detailLevel === newLevel) return;
+        detailLevel = newLevel;
+        try {
+          global.localStorage?.setItem("findmyha:picker-detail", newLevel);
+        } catch (_) { /* private-mode storage blocked */ }
+        render();
+      },
+      getDetailLevel() { return detailLevel; },
       clear() {
         allEntities = [];
         filtered = [];
