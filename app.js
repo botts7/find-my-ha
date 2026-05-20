@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.3";
+  const APP_VERSION = "0.7.4";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -301,10 +301,11 @@
       entityPicker.setMode(mode);  // sync filter to current mode
       entityPicker.load(ws);
       loadAreas(ws);  // v0.5: populate area picker for identify mode
-      // v0.7.2: if Wi-Fi mode is the restored choice from localStorage,
-      // batch-query capabilities so the picker narrows on first load
-      // (not just on mode-toggle clicks).
-      if (mode === "wifi") loadWifiCapabilities();
+      // v0.7.4: probe Wi-Fi capability on EVERY authed transition (not
+      // just when in Wi-Fi mode) so the mode-button visibility is
+      // accurate before the user ever clicks it. Hides the button on
+      // installs with zero controller-side trackable entities.
+      loadWifiCapabilities();
     }
     if (state === "disconnected" || state === "error") {
       // Note: don't stop the streamer here — it self-resubscribes on the
@@ -422,6 +423,37 @@
     });
   });
 
+  // v0.7.4: hide the Wi-Fi mode button when the install has zero
+  // candidates. We probe capability silently on connect (or on first
+  // Wi-Fi-mode hover) and toggle the button visibility. Real-install
+  // validation showed 326 device_trackers → 1 controller-side
+  // candidate is a common outcome — better to hide the mode than
+  // have users discover its uselessness one tap at a time.
+  let wifiModeAvailability = null;  // null = unknown, true/false = probed
+
+  function _applyWifiModeAvailability() {
+    if (!modeWifiBtn) return;
+    if (wifiModeAvailability === false) {
+      modeWifiBtn.style.display = "none";
+      modeWifiBtn.title =
+        "Wi-Fi find unavailable — no controller-side RSSI integration "
+        + "detected (UniFi/Omada/Asuswrt-Merlin/Mikrotik). "
+        + "Use BLE or Identify instead.";
+      // If user was on Wi-Fi mode, snap them back to BLE.
+      if (mode === "wifi") {
+        mode = "ble";
+        localStorage.setItem("find_mode", mode);
+        applyModeButtons();
+        entityPicker.setMode(mode);
+        updateTab3Panels();
+        updateStepIndicator();
+      }
+    } else {
+      modeWifiBtn.style.display = "";
+      modeWifiBtn.title = "";
+    }
+  }
+
   // v0.7.2: batch wifi_find_capability lookup. Calls
   // home_insights/wifi_find_capability with every device_tracker entity_id
   // and pushes the response into the picker. Gracefully degrades when
@@ -449,19 +481,28 @@
         type: "home_insights/wifi_find_capability",
         entity_ids: allDeviceTrackers,
       });
-      entityPicker.setWifiCapabilities(resp?.capabilities ?? {});
+      const caps = resp?.capabilities ?? {};
+      entityPicker.setWifiCapabilities(caps);
+      // v0.7.4: count trackable entries; hide mode button when zero.
+      const trackableCount = Object.values(caps).filter(
+        (c) => c?.is_trackable === true,
+      ).length;
+      wifiModeAvailability = trackableCount > 0;
+      _applyWifiModeAvailability();
     } catch (e) {
       const msg = e?.message ?? "";
       if (/unknown[_ ]command/i.test(msg)) {
         // Backend is pre-v1.21.1. Picker stays in fall-back mode;
         // surface the situation so the user knows why filtering isn't
-        // narrowing.
+        // narrowing. Mode button stays visible (user can still try).
         if (entityListHintEl) {
           entityListHintEl.innerHTML =
             "<strong>Pre-filter unavailable</strong> — update HA Insights "
             + "to v1.21.1+ to narrow the picker to only Wi-Fi-trackable "
             + "entities. Showing all device-trackers for now.";
         }
+        wifiModeAvailability = true;  // benefit of the doubt
+        _applyWifiModeAvailability();
       }
       // Other errors are silently ignored; the user can still pick from
       // the unfiltered list.

@@ -28,7 +28,7 @@ Phone (PWA in Chrome)                Home Assistant
 
 ## Status
 
-🚧 **v0.7.2 — Wi-Fi find with pre-filtered picker + visible errors.**
+🚧 **v0.7.4 — Wi-Fi find graceful sunset on non-controller installs.**
 Live at https://botts7.github.io/find-my-ha/. Tab 1 hardcoded
 visible; SW network-first for everything; visible version pill; JS
 error banner; force-update self-rescue button at the bottom.
@@ -51,6 +51,8 @@ Cumulative feature set:
 - **v0.7.0** — third mode `📶 Wi-Fi`: pick your phone's `device_tracker`, walk through the house, the PWA subscribes to HA Insights `home_insights/wifi_find_self` (ships in v1.21.0) and streams your phone's per-AP RSSI through the same warmer/colder UI as BLE find. Inverse multilateration — the APs measure the phone, not the other way around. Freshness pill shows update cadence (UniFi is ~10-30 s)
 - **v0.7.1** — fix Wi-Fi find stuck on "subscribing…" when the picked entity has no RSSI / no AP attribute. Start handler now inspects the initial subscribe result BEFORE swapping surfaces, surfaces "update HA Insights to v1.21.0+" for `unknown_command`, and shows a 45 s no-sample warning with router-polling guidance
 - **v0.7.2** — Wi-Fi mode pre-filters the device picker to only entities exposing RSSI + AP attrs via the new `home_insights/wifi_find_capability` batch query (ships in HA Insights v1.21.1). UniFi/Asuswrt/Omada trackers stay; `mobile_app` GPS trackers and Plex/iCloud entries are filtered out. Status line shows "N of M device-trackers expose Wi-Fi RSSI"
+- **v0.7.3** — dropdown placeholder distinguishes "connect to HA first" from "no Wi-Fi-trackable devices found" — three empty states now have three distinct messages
+- **v0.7.4** — Wi-Fi mode button hides entirely when the install has zero controller-side trackable candidates (paired with HA Insights v1.21.3 controller-platform whitelist that excludes ESPHome/Shelly/Tasmota self-reports). Tooltip explains why the button is hidden when hovered on a development snapshot. New `docs/COMPANION_APP_PROPOSAL.md` describes the upstream Wi-Fi RSSI streaming primitive that would unlock Wi-Fi find for the ~60% of HA installs without a controller integration
 
 ## Quick start (early-access)
 
@@ -75,7 +77,7 @@ iOS users: install the HA Companion app — once the Companion feature request (
 
 ## Roadmap
 
-- **v0.1 → v0.7.2**: all *shipped*. See Status above + git log for the detailed trail.
+- **v0.1 → v0.7.4**: all *shipped*. See Status above + git log for the detailed trail.
 
 ### Deferred — v0.6 walking-verify expansion (parked 2026-05-19)
 
