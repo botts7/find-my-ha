@@ -135,6 +135,20 @@
       background: var(--accent); color: white;
     }
 
+    /* v0.7.5: detail-level toggle above the entity picker. Smaller +
+       lighter than the mode toggle so it doesn't compete visually. */
+    .picker-detail-btn {
+      padding: 4px 10px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      border-radius: 12px; cursor: pointer;
+      font: inherit; font-size: 0.85em; font-weight: 500;
+      margin: 0; width: auto;
+    }
+    .picker-detail-btn.active {
+      background: var(--accent); color: white;
+      border-color: var(--accent);
+    }
+
     /* Identify panel inside Tab 3 */
     .identify-state {
       background: var(--bg); padding: 12px;
@@ -474,6 +488,16 @@
       AirTag, BTHome, BLE locks).
     </div>
     <input type="search" id="entity-search" placeholder="Search BLE-trackable entities…" />
+    <!-- v0.7.5: detail-level toggle. By default the picker shows just
+         the friendly name, since entity_ids on Omada / mobile_app /
+         BLE proxies often contain MACs and clutter the dropdown. Tap
+         this to add the entity_id suffix for disambiguation when two
+         devices share a name. Setting persists in localStorage. -->
+    <div class="picker-detail-row" style="display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 0.85em;">
+      <span style="color: var(--muted);">Show in list:</span>
+      <button id="picker-detail-name" class="picker-detail-btn active" type="button" data-detail="name">Name</button>
+      <button id="picker-detail-entity" class="picker-detail-btn" type="button" data-detail="entity">Name · entity ID</button>
+    </div>
     <select id="entity-select" class="entity-select" disabled>
       <option value="">— pick a device —</option>
     </select>
