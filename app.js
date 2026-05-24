@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.5";
+  const APP_VERSION = "0.7.6";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -446,7 +446,11 @@
       applyPickerDetailButtons();
     });
   });
-  applyPickerDetailButtons();
+  // v0.7.5 → v0.7.6 fix: initial applyPickerDetailButtons() call lives
+  // AFTER the EntityPicker constructor (search file for
+  // "const entityPicker = new EntityPicker"). v0.7.5 had it here,
+  // which read entityPicker via TDZ and threw "cannot access entity
+  // picker" on page load.
 
   // v0.7.4: hide the Wi-Fi mode button when the install has zero
   // candidates. We probe capability silently on connect (or on first
@@ -715,6 +719,12 @@
       maybeAutoAdvance();
     },
   });
+  // v0.7.6: initial state-sync for the picker-detail toggle buttons.
+  // Moved here from earlier in the file (right above) because
+  // applyPickerDetailButtons reads entityPicker.getDetailLevel(), and
+  // entityPicker is only just now defined. Calling it before this point
+  // triggered a TDZ ReferenceError on page load.
+  applyPickerDetailButtons();
   refreshEntitiesBtn.addEventListener("click", () => {
     if (ws.getState() === "authed" || ws.getState() === "streaming") {
       entityPicker.load(ws);
