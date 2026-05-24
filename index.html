@@ -338,11 +338,43 @@
     .entity-select:disabled { opacity: 0.5; cursor: not-allowed; }
     .entity-selected {
       margin-top: 10px;
-      padding: 8px 10px;
+      padding: 10px 12px;
       background: rgba(34, 197, 94, 0.1);
       border-left: 3px solid var(--ok);
       border-radius: 6px;
       font-size: 0.88em;
+    }
+    /* v0.7.7 — two-line layout inside the "Tracking:" confirmation
+       block under the picker. Friendly name on top, entity_id monospace
+       small below, optional BLE-info line under that. Replaces the
+       previous single-line "Tracking: name (entity_id)" smush. */
+    .entity-selected .es-label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78em;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2px;
+    }
+    .entity-selected .es-name {
+      display: block;
+      font-weight: 600;
+      font-size: 1.02em;
+      line-height: 1.25;
+    }
+    .entity-selected .es-eid {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.82em;
+      color: var(--muted);
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+    }
+    .entity-selected .es-info {
+      display: block;
+      color: var(--fg);
+      margin-top: 6px;
+      font-size: 0.85em;
     }
     .row-flex {
       display: flex; gap: 8px; align-items: center;

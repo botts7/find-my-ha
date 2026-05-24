@@ -82,7 +82,7 @@
 
   // v0.5.4: render the running version on screen so the user can tell
   // at a glance whether their browser is serving the latest deploy.
-  const APP_VERSION = "0.7.6";
+  const APP_VERSION = "0.7.7";
 
   const DEBUG = false;
   function dlog() { if (DEBUG) console.log.apply(console, arguments); }
@@ -732,22 +732,44 @@
   });
   function updateEntitySelectedDisplay(bleInfo) {
     if (!pickedEntity) {
-      entitySelectedEl.textContent = "";
+      entitySelectedEl.innerHTML = "";
       entitySelectedEl.style.display = "none";
       return;
     }
-    const label = pickedEntity.name || pickedEntity.original_name || pickedEntity.entity_id;
-    let txt = `Tracking: ${label} (${pickedEntity.entity_id})`;
+    // v0.7.7 — two-line layout. Friendly name big on top, entity_id
+    // monospace small beneath. Native <select> can't render two-line
+    // options, but the confirmation block beneath the picker can, and
+    // that's where the user actually verifies "did I pick the right
+    // thing." Use textContent on each child to avoid HTML injection
+    // from device-supplied friendly_name.
+    const label = pickedEntity.name
+      || pickedEntity.original_name
+      || pickedEntity.entity_id;
+    const labelSpan = document.createElement("span");
+    labelSpan.className = "es-label";
+    labelSpan.textContent = "Tracking";
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "es-name";
+    nameSpan.textContent = label;
+    const eidSpan = document.createElement("span");
+    eidSpan.className = "es-eid";
+    eidSpan.textContent = pickedEntity.entity_id;
+    entitySelectedEl.replaceChildren(labelSpan, nameSpan, eidSpan);
     if (bleInfo && (bleInfo.bluetooth_mac || bleInfo.suggested_name_prefix)) {
       const parts = [];
       if (bleInfo.suggested_name_prefix) parts.push(`name prefix “${bleInfo.suggested_name_prefix}”`);
       if (bleInfo.bluetooth_mac) parts.push(`MAC ${bleInfo.bluetooth_mac}`);
-      txt += `\nAuto-detected: ${parts.join(", ")}`;
+      const infoSpan = document.createElement("span");
+      infoSpan.className = "es-info";
+      infoSpan.textContent = `Auto-detected: ${parts.join(", ")}`;
+      entitySelectedEl.appendChild(infoSpan);
     } else if (bleInfo === null && pickedEntity) {
-      txt += "\n(no Bluetooth info on file — type a name prefix manually)";
+      const infoSpan = document.createElement("span");
+      infoSpan.className = "es-info";
+      infoSpan.textContent =
+        "(no Bluetooth info on file — type a name prefix manually)";
+      entitySelectedEl.appendChild(infoSpan);
     }
-    entitySelectedEl.textContent = txt;
-    entitySelectedEl.style.whiteSpace = "pre-line";
     entitySelectedEl.style.display = "block";
   }
 
